@@ -9,9 +9,12 @@ using Whisper.net.LibraryLoader;
 namespace Spit.App;
 
 /// <summary>
-/// `Spit.exe --smoke-test &lt;wav&gt; --report &lt;json&gt;`: CI's proof that the published app transcribes on Windows
-/// (build spec AC-6). No UI, no hook, no single-instance lock, no network; the model must already be in the
-/// data folder (`SPIT_DATA_DIR` in CI) — nothing is downloaded.
+/// `Spit.exe --smoke-test &lt;wav&gt; --report &lt;json&gt; [--model &lt;file&gt;]`: CI's proof that the published app
+/// transcribes on Windows (build spec AC-6). No UI, no hook, no single-instance lock, no network; the model
+/// must already be in the data folder (`SPIT_DATA_DIR` in CI) — nothing is downloaded.
+///
+/// `--model` is what makes S1's matrix possible: without it the harness can only ever measure whichever model
+/// happens to be the default, and S1 exists to compare all three. CI passes no `--model` and is unaffected.
 ///
 /// It runs the one-pass transcription the app falls back to, then the live path the way a dictation drives it:
 /// a `StreamingSession` fed 100 ms at a time in real time, finished, with the tail pass and the stitch. The
@@ -21,6 +24,9 @@ public static class SmokeTest
 {
     public const string Flag = "--smoke-test";
     public const string ReportFlag = "--report";
+
+    /// Optional; defaults to `ModelCatalog.DefaultFile`, so CI's existing invocation keeps its meaning.
+    public const string ModelFlag = "--model";
 
     /// Malformed arguments: no report can be written, because there is nowhere to write it.
     public const int UsageExitCode = 2;
@@ -37,17 +43,28 @@ public static class SmokeTest
     private const int ResampleBlockFrames = 4096;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
-    /// The WAV and report paths, or null when either is missing.
-    public static (string Wav, string Report)? Parse(IReadOnlyList<string> args)
+    /// The WAV, the report path and the model file, or null when the WAV or the report is missing, or when
+    /// `--model` is given without a value or names a file the catalog does not pin.
+    ///
+    /// An unpinned model is a usage error and not a fall back to the default: the S1 driver loops over model
+    /// names, and a typo there has to stop the run rather than quietly produce a third set of numbers for the
+    /// default model under another model's label.
+    public static (string Wav, string Report, string Model)? Parse(IReadOnlyList<string> args)
     {
+        ArgumentNullException.ThrowIfNull(args);
         var wav = ValueAfter(args, Flag);
         var report = ValueAfter(args, ReportFlag);
-        return wav is null || report is null ? null : (wav, report);
+        if (wav is null || report is null) return null;
+
+        var model = ValueAfter(args, ModelFlag);
+        if (model is null) return args.Contains(ModelFlag) ? null : (wav, report, ModelCatalog.DefaultFile);
+        return ModelCatalog.Default.Find(model) is null ? null : (wav, report, model);
     }
 
     /// Exit 0 only when the one-pass text is non-empty and contains one of the fixture's words; 1 otherwise,
     /// including any exception (reported with its type and message).
-    public static int Run(string wavPath, string reportPath) => RunAsync(wavPath, reportPath).GetAwaiter().GetResult();
+    public static int Run(string wavPath, string reportPath, string modelFile) =>
+        RunAsync(wavPath, reportPath, modelFile).GetAwaiter().GetResult();
 
     /// The file as 16 kHz mono Float32, converted the way `AudioCapture` converts a microphone: NAudio decodes,
     /// channels are averaged, and WDL resamples in input-driven mode.
@@ -79,9 +96,9 @@ public static class SmokeTest
         return ExpectedWordStems.Any(stem => lower.Contains(stem, StringComparison.Ordinal));
     }
 
-    private static async Task<int> RunAsync(string wavPath, string reportPath)
+    private static async Task<int> RunAsync(string wavPath, string reportPath, string modelFile)
     {
-        var report = new Report();
+        var report = new Report { ModelFile = modelFile, WavFile = Path.GetFileName(wavPath) };
         try
         {
             var paths = AppPaths.Default;
@@ -93,7 +110,7 @@ public static class SmokeTest
             report.HasSpeech = EnergyGate.HasSpeech(samples);
 
             using var models = new ModelDownloader(paths.Models);
-            var file = ModelCatalog.DefaultFile;
+            var file = modelFile;
             if (!models.IsDownloaded(file)) throw new FileNotFoundException($"{Strings.ModelNotDownloaded} in {paths.Models}", file);
             await using var transcriber = new WhisperTranscriber(models, file);
             report.AsrModel = transcriber.AsrModel;
@@ -216,10 +233,17 @@ public static class SmokeTest
     }
 
     /// CI reads `ok`, `text`, `error`, `asrModel`, `runtime`, `audioMs` and `transcribeMs`; the rest is for people.
+    ///
+    /// `modelFile` and `wavFile` are here so a folder of 36 S1 reports can be collated without trusting the file
+    /// names the driver gave them. There is deliberately no whole-run wall clock: rule 4's median is the one-pass
+    /// time, `transcribeMs` is exactly that, and a second duration that also counts the model load would be the
+    /// easy column to median by mistake.
     private sealed class Report
     {
         public bool Ok { get; set; }
         public string? Text { get; set; }
+        public string? ModelFile { get; set; }
+        public string? WavFile { get; set; }
         public string? StreamedText { get; set; }
         public string? AsrModel { get; set; }
         public string? Runtime { get; set; }

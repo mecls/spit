@@ -17,7 +17,7 @@ public static class Program
         // CI only: no UI and no single-instance lock, so it runs beside an installed Spit.
         if (args.Contains(SmokeTest.Flag))
         {
-            return SmokeTest.Parse(args) is { } smoke ? SmokeTest.Run(smoke.Wav, smoke.Report) : SmokeTest.UsageExitCode;
+            return SmokeTest.Parse(args) is { } smoke ? SmokeTest.Run(smoke.Wav, smoke.Report, smoke.Model) : SmokeTest.UsageExitCode;
         }
 
         using var instance = new SingleInstance();

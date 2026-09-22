@@ -49,8 +49,15 @@ Source spec: `tasks/prd-windows-parity.md`. Rule numbers below refer to its §2,
 
 ### Notes
 
-- **Windows tests** live beside the code in `windows/Spit.Core.Tests/` and `windows/Spit.App.Tests/`. Run from the repo root: `dotnet test windows/Spit.sln`. The runner is **Microsoft.Testing.Platform**, set in root `global.json` — the .NET 10 SDK refuses VSTest for xunit.v3, so do not add `Microsoft.NET.Test.Sdk`.
-- `Spit.Core.Tests` runs on the Mac too; `Spit.App.Tests` is Windows-only (`WindowsFactAttribute`).
+- **Windows tests** live beside the code in `windows/Spit.Core.Tests/` and `windows/Spit.App.Tests/`. The runner is **Microsoft.Testing.Platform**, set in root `global.json` — the .NET 10 SDK refuses VSTest for xunit.v3, so do not add `Microsoft.NET.Test.Sdk`.
+- **On this Mac, use `~/.dotnet/dotnet`, not `dotnet`.** `/usr/local/share/dotnet` holds only SDK 6.0.400, which `global.json` rejects; the 10.0.401 SDK is in `~/.dotnet`.
+- **On this Mac, `dotnet test` reports `Zero tests ran` / exit code 5 even when everything passes.** Verified 2026-09-22 with SDK 10.0.401: the same assembly run directly reports 213 passing. CI is unaffected (it resolves a 10.0.1xx SDK through `global.json`). Run the module instead, from the repo root:
+  `~/.dotnet/dotnet windows/Spit.Core.Tests/bin/Debug/net10.0/Spit.Core.Tests.dll`
+  Do not read that exit code 5 as a broken build at the PC.
+- **The WPF app compiles on the Mac** with `-p:EnableWindowsTargeting=true`:
+  `~/.dotnet/dotnet build windows/Spit.App/Spit.App.csproj -p:EnableWindowsTargeting=true`
+  This is bigger than it looks — every C# change in 1.0 and 3.0 can be compile-checked here, so the PC sessions are for *running*, never for finding a typo.
+- `Spit.Core.Tests` runs on the Mac too; `Spit.App.Tests` builds here but is a `win-x64` exe that cannot run here, and its tests are Windows-only anyway (`WindowsFactAttribute`).
 - **Mac tests** are XCTest in one flat bundle at `mac/VoiceTests/`. Run from `mac/`: `xcodebuild -project Voice.xcodeproj -scheme Voice -derivedDataPath build/test-dd -quiet test`. Currently 143 tests, 1 skipped. **There is no macOS CI** — a person runs every one.
 - After any `mac/project.yml` change: `xcodegen generate` from `mac/` first.
 - The installer is built by `windows/scripts/pack.ps1`; Velopack names it `Spit-win-Setup.exe` and the script renames it to `Spit-Setup.exe`.
@@ -64,20 +71,33 @@ only trust the boxes if they were ticked as the work happened.
 
 ## Tasks
 
-- [ ] 0.0 Create a feature branch for this work
-  - [ ] 0.1 Branch `feat/windows-parity` off `main` — **not** off the current `docs/parakeet-english-engine`, which is an open, unrelated docs PR
+- [x] 0.0 Create a feature branch for this work
+  - [x] 0.1 Branch `feat/windows-parity` off `main` — **not** off the current `docs/parakeet-english-engine`, which is an open, unrelated docs PR
 
 - [ ] 1.0 Prepare the spike session on the Mac, so PC time is spent measuring rather than authoring
-  - [ ] 1.1 Add a `--model <file>` argument to `SmokeTest.Parse` / `Run` in `windows/Spit.App/App/SmokeTest.cs`. **Blocking for S1:** `:96` currently hardcodes `var file = ModelCatalog.DefaultFile`, so the harness can only ever measure one of the three models. Default to `ModelCatalog.DefaultFile` when the flag is absent, so `windows-ci.yml` keeps working unchanged
-  - [ ] 1.2 Extend the smoke `Report` record with the wall-clock of the whole run and the resolved model path, if `TranscribeMs` and `AsrModel` do not already cover what rule 4's median needs
-  - [ ] 1.3 Add a test in `windows/Spit.App.Tests/SmokeTestLoaderTests.cs` for `--model`: absent → `DefaultFile`; present with a catalog file → that file; present with an unknown file → usage exit code 2, not a crash
-  - [ ] 1.4 Write `windows/scripts/spike-s1.ps1`: 2 runtimes (`SPIT_WHISPER_RUNTIME=cpu|vulkan`) × 3 models × 2 fixtures (`mac/Fixtures/en.wav`, `pt-synthetic.wav`) × 3 repetitions, one `--report` JSON per run into a folder, **discarding the first repetition of each pair** (rule 4). Copy the loop shape from `.github/workflows/windows-ci.yml:116-120`
-  - [ ] 1.5 Make `spike-s1.ps1` print a markdown table of medians plus, for every Vulkan row, the `BackendLog` line naming the device — a Vulkan row with no device line is a failed measurement, not a slow one (rule 5)
-  - [ ] 1.6 Add five empty sections to `docs/SPIKES.md` (S1–S5) in its existing format, each with the pass condition and the pre-agreed failure branch from spec rule 2, so evidence lands in the right shape under time pressure
-  - [ ] 1.7 Build the two S5 installers now — `0.2.0-test` and `0.2.1-test` — via `windows/scripts/pack.ps1`, so the PC session does not start with a build. This is the one spike with a real setup cost
-  - [ ] 1.8 Run `dotnet test windows/Spit.sln` on the Mac and record the passing count as the pre-session baseline (`Spit.Core.Tests` runs here; `Spit.App.Tests` is Windows-only)
+  - [x] 1.1 Add a `--model <file>` argument to `SmokeTest.Parse` / `Run` in `windows/Spit.App/App/SmokeTest.cs`. **Blocking for S1:** `:96` currently hardcodes `var file = ModelCatalog.DefaultFile`, so the harness can only ever measure one of the three models. Default to `ModelCatalog.DefaultFile` when the flag is absent, so `windows-ci.yml` keeps working unchanged
+  - [x] 1.2 Extend the smoke `Report` record with the wall-clock of the whole run and the resolved model path, if `TranscribeMs` and `AsrModel` do not already cover what rule 4's median needs
+    - Added `modelFile` and `wavFile`, so a folder of 36 reports collates without trusting the driver's file names. **Deliberately no whole-run wall clock:** rule 4's median is the one-pass time and `transcribeMs` is exactly that; a second duration that also counted the model load would be the easy column to median by mistake.
+    - Checked while doing it: each smoke run is a fresh process, so every `transcribeMs` is a *cold first* transcription. That is the right comparison — the Mac's 3.0 s bound in `WhisperKitTranscriberTests:35` is also a first transcription after a model load in a fresh process, so rule 6's ≤ 3.15 s is like-for-like. **Do not "fix" the driver by warming the model up first**; it would silently make the Windows number the easier one.
+  - [x] 1.3 Add a test in `windows/Spit.App.Tests/SmokeTestLoaderTests.cs` for `--model`: absent → `DefaultFile`; present with a catalog file → that file; present with an unknown file → usage exit code 2, not a crash
+  - [x] 1.4 Write `windows/scripts/spike-s1.ps1`: 2 runtimes (`SPIT_WHISPER_RUNTIME=cpu|vulkan`) × 3 models × 2 fixtures (`mac/Fixtures/en.wav`, `pt-synthetic.wav`) × 3 repetitions, one `--report` JSON per run into a folder, **discarding the first repetition of each pair** (rule 4). Copy the loop shape from `.github/workflows/windows-ci.yml:116-120`
+  - [x] 1.5 Make `spike-s1.ps1` print a markdown table of medians plus, for every Vulkan row, the `BackendLog` line naming the device — a Vulkan row with no device line is a failed measurement, not a slow one (rule 5)
+    - Dry-run against a stand-in binary on the Mac: all 36 runs, the table, both **VOID** causes (fell through to CPU / loaded Vulkan but printed no device line, which are different problems), the preflight that names every missing model and the exe at once, and the rule 6 verdict sentence with both numbers in it. The script has never met a real GPU, but it has met its own edge cases.
+    - It also prints, ready to paste into `docs/SPIKES.md`, the exact sentence task 3.4 asks for, and says whether 3.5 or 3.6 comes next.
+  - [x] 1.6 Add five empty sections to `docs/SPIKES.md` (S1–S5) in its existing format, each with the pass condition and the pre-agreed failure branch from spec rule 2, so evidence lands in the right shape under time pressure
+    - Each section carries its pass condition, its failure branch, and an empty table shaped for the answer, so the PC session is filling blanks rather than deciding what to write down.
+  - [x] 1.7 Make the two S5 installers a one-line job, so the PC session does not start with an improvised build. This is the one spike with a real setup cost
+    - **Correction: the installers cannot be built on the Mac.** Velopack 1.2.0's `vpk` changes its whole command surface with the host OS — on macOS `vpk pack` defaults to `--channel osx`, offers `--bundleId`/`--plist`/`--notaryProfile`, and rejects a `.ico`; there is no target-OS selector. `tasks/spit-mac-windows-build-spec.md:410`'s "verified by cross-packing on the Mac" does not hold for the pack step.
+    - What *was* verified on the Mac: `dotnet publish -r win-x64 --self-contained -p:EnableWindowsTargeting=true` completes and stamps the version (`0.2.0-test` is in the published `Spit.dll`). Only the `vpk pack` leg needs Windows.
+    - So `pack.ps1` gained `-PackVersion` and `-OutputDir` instead, and the two builds are now **(PC)** work at the top of 2.0:
+      `pwsh windows/scripts/pack.ps1 -PackVersion 0.2.0-test -OutputDir windows/Releases/s5-0.2.0`
+      `pwsh windows/scripts/pack.ps1 -PackVersion 0.2.1-test -OutputDir windows/Releases/s5-0.2.1`
+    - `-PackVersion` deliberately does not write `VERSION`: `scripts/check-version.sh` compares it to `mac/project.yml`, so a committed `0.2.1-test` would fail CI on both clients. It sets `InformationalVersion` only — `AssemblyVersion` would become the invalid `0.2.0-test.0` — which is what `Coordinator.ClientVersion` reads, so the two S5 installs identify themselves on the wire.
+  - [x] 1.8 Run the Windows test suite on the Mac and record the passing count as the pre-session baseline (`Spit.Core.Tests` runs here; `Spit.App.Tests` is Windows-only)
+    - **Baseline: 213 total, 0 failed, 0 skipped** (`Spit.Core.Tests`, 2026-09-22). `Spit.App.Tests` compiles here and must be counted on the PC.
 
 - [ ] 2.0 **(PC)** Session 1 — run the five spikes in rule 3's order (S4 → S3 → S2 → S1 → S5) and commit the evidence
+  - [ ] 2.0a Build the two S5 installers first, since 1.7 could not (`pack.ps1 -PackVersion 0.2.0-test -OutputDir windows/Releases/s5-0.2.0`, then the same for `0.2.1-test`). Doing it now means S5 at the end of the session is an install, not a build
   - [ ] 2.1 Install from `Spit-Setup.exe` the way a friend would — downloaded, not copied from a build folder — and confirm the install needs no admin prompt
   - [ ] 2.2 **S4:** run `Spit.exe --key-log` and record `vkCode`, `scanCode`, flags and repeat counts for four gestures: hold Right Ctrl; hold Right Alt; AltGr+2 on the pt-PT layout; Right Ctrl+C
   - [ ] 2.3 **S4:** check `vkE8` menu masking in **both** Notepad and File Explorer — they use different menu implementations, and rule 12 requires both (`windows/Spit.App/Platform/MenuMask.cs`)

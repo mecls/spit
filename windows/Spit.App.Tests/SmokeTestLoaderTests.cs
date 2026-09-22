@@ -53,9 +53,24 @@ public sealed class SmokeTestLoaderTests : IDisposable
     [WindowsFact]
     public void Parse_NeedsBothTheWavAndTheReport()
     {
-        Assert.Equal(("a.wav", "r.json"), SmokeTest.Parse(["--smoke-test", "a.wav", "--report", "r.json"]));
+        Assert.Equal(("a.wav", "r.json", ModelCatalog.DefaultFile), SmokeTest.Parse(["--smoke-test", "a.wav", "--report", "r.json"]));
         Assert.Null(SmokeTest.Parse(["--smoke-test", "a.wav"]));
         Assert.Null(SmokeTest.Parse(["--smoke-test", "--report", "r.json"]));
+    }
+
+    /// S1 runs the same binary 36 times over three models. A `--model` the catalog does not pin has to be a
+    /// usage error, because the alternative — falling back to the default — hands back a full set of numbers
+    /// filed under a model that never ran.
+    [WindowsFact]
+    public void Parse_TakesAPinnedModelAndRefusesAnythingElse()
+    {
+        string[] with = ["--smoke-test", "a.wav", "--report", "r.json", "--model", ModelCatalog.TurboCompressedFile];
+        Assert.Equal(("a.wav", "r.json", ModelCatalog.TurboCompressedFile), SmokeTest.Parse(with));
+
+        Assert.Null(SmokeTest.Parse(["--smoke-test", "a.wav", "--report", "r.json", "--model", "ggml-tiny.bin"]));
+        Assert.Null(SmokeTest.Parse(["--smoke-test", "a.wav", "--report", "r.json", "--model"]));
+        // The flag with the next flag as its value, rather than a file name.
+        Assert.Null(SmokeTest.Parse(["--smoke-test", "a.wav", "--model", "--report", "r.json"]));
     }
 
     [WindowsFact]

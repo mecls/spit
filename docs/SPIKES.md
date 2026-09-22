@@ -155,3 +155,115 @@ without AVX; with no GPU, whisper.cpp logs "no GPU found" and runs the Vulkan bu
   found no seam between stream and tail, so it re-transcribed the whole clip (task 9.1).
 - **Still to measure on a real PC (S1):** a machine with a GPU Vulkan can use, `pt-synthetic.wav`, and 20 real
   dictations through the latency SQL.
+
+---
+
+# The five PC spikes (S1–S5) — not yet run
+
+Specified in `tasks/prd-spit-mac-windows.md` §5 before the Windows UI existed, never run, because until now there
+was no physical PC. Five design decisions are therefore sitting on their documented fallbacks rather than on
+evidence. `tasks/prd-windows-parity.md` governs how they are run; the rule numbers below are its §2.
+
+Three things that apply to all five:
+
+- **Run them in this order: S4 → S3 → S2 → S1 → S5** (rule 3). S4 can remove a hotkey and S1 can change the
+  default model, and the §5 checklist assumes both are settled.
+- **The failure branch is already decided** (rule 2). A spike that fails and then gets argued with is not a
+  spike.
+- **Fill these sections with raw output** — the actual `vkCode`s, the actual milliseconds, the actual log
+  lines — not a sentence saying it passed (rule 1). A bare "it worked" cannot be re-checked in six months
+  when the rule it justifies looks arbitrary and someone deletes it.
+
+Each heading gets the date and the machine when it is run, matching the sections above.
+
+## S4 — Right Ctrl / Right Alt / AltGr on a pt-PT keyboard (pending)
+
+Harness: `Spit.exe --key-log` (`windows/Spit.App/Program.cs:8`). Subjects: `KeyboardHook.cs`, `MenuMask.cs`.
+
+**Passes if** all four gestures produce the `vkCode`/`scanCode`/flags the hotkey code assumes, **and** `vkE8`
+masking suppresses the menu bar in *both* Notepad and File Explorer (rule 12 — they use different menu
+implementations), **and** nothing is swallowed: Right Ctrl+C still copies and AltGr+2 still types `@` (rule 11).
+
+**On failure: drop `rightAlt`, Right Ctrl only.** Apply it immediately, before any other spike runs against a
+hotkey that is going away (task 2.5).
+
+| gesture | vkCode | scanCode | flags | repeats | menu opened? | passed through? |
+|---|---|---|---|---|---|---|
+| hold Right Ctrl | | | | | n/a | |
+| hold Right Alt | | | | | Notepad: / Explorer: | |
+| AltGr+2 (pt-PT) | | | | | | typed `@`? |
+| Right Ctrl+C | | | | | n/a | copied? |
+
+## S3 — reading an elevated foreground window (pending)
+
+Subject: `windows/Spit.App/Platform/ElevationProbe.cs`. Spit runs non-elevated throughout.
+
+**Passes if** the probe answers correctly for both cases below. **On failure:** keep rule 30's
+"access-denied counts as elevated", which is the safe direction — it degrades to clipboard-only rather than
+pasting into a window it cannot reach.
+
+| foreground window | ElevationProbe says | correct? | what the user saw |
+|---|---|---|---|
+| Notepad as administrator | | | |
+| Notepad as normal user | | | |
+
+## S2 — which process renders the clipboard first under Clipboard History (pending)
+
+Subjects: `windows/Spit.App/Inject/ClipboardSession.cs`, `ClipboardSnapshot.cs`. Clipboard History **on**,
+delayed-render text carrying `ExcludeClipboardContentFromMonitorProcessing`.
+
+**Passes if** the target app triggers the first `WM_RENDERFORMAT` in all three hosts, which is what would let
+the 1.5 s restore shrink. **On failure:** keep rule 32's 1.5 s.
+
+**Rule 9 is unconditional and outranks the spike:** press Win+V after each paste. If the dictation is in
+history, stop the session and fix it — it does not become a documented limitation (task 2.9).
+
+| paste target | first WM_RENDERFORMAT from | ms until it arrived | in Win+V history? |
+|---|---|---|---|
+| Notepad | | | must be **no** |
+| Chrome | | | must be **no** |
+| Word | | | must be **no** |
+
+## S1 — one-pass latency: 2 runtimes × 3 models × 2 fixtures (pending)
+
+Driver: `pwsh windows/scripts/spike-s1.ps1`. It runs the matrix, discards the first repetition of each cell
+(rule 4), prints the table below filled in, and prints rule 6's verdict sentence ready to paste.
+
+**Rule 5: a Vulkan row is only valid if `BackendLog` named the device.** Whisper.net's runtime order falls
+through `Vulkan → Cpu → CpuNoAvx` in silence, so a Vulkan run that quietly loaded the CPU library looks like a
+slow GPU rather than a missing one. The driver marks such rows **VOID**; void is not slow, and a void row is
+re-run, not recorded.
+
+**Rule 6:** the Windows default becomes `ggml-large-v3-turbo-q5_0.bin` **iff** its median Vulkan time on
+`en.wav` is ≤ 0.25 × audio duration = **≤ 3,150 ms**. That bound is not invented here: it is the Mac's own
+shipped assertion (`mac/VoiceTests/WhisperKitTranscriberTests.swift:35` fails at 3.0 s), and it is measured
+the same way — a cold first transcription in a fresh process, which is what every smoke run is.
+
+Machine: (CPU, RAM, GPU — fill in)
+
+| fixture | model | runtime asked | runtime loaded | audio ms | kept timings | median ms | median / audio | Vulkan device |
+|---|---|---|---|---|---|---|---|---|
+| | | | | | | | | |
+
+Verdict sentence (paste the driver's output verbatim):
+
+## S5 — installing 0.2.1 over 0.2.0 (pending)
+
+Build both first — the Mac cannot do it, because Velopack's `vpk` only packs for its host OS:
+
+```
+pwsh windows/scripts/pack.ps1 -PackVersion 0.2.0-test -OutputDir windows/Releases/s5-0.2.0
+pwsh windows/scripts/pack.ps1 -PackVersion 0.2.1-test -OutputDir windows/Releases/s5-0.2.1
+```
+
+**Passes if,** after installing 0.2.0-test and then 0.2.1-test: exactly one entry in Installed Apps, and the
+data directory, the stored token and the Run entry all survive. **On failure:** the `/spit` page tells users to
+uninstall first.
+
+| after installing 0.2.1-test over 0.2.0-test | result |
+|---|---|
+| entries in Installed Apps | must be exactly 1 |
+| `%LOCALAPPDATA%\Miraside\Spit` intact | |
+| stored token survives | |
+| Run registry entry survives | |
+| version the app reports | expect `0.2.1-test` |
