@@ -10,6 +10,32 @@ final class DictationMachineTests: XCTestCase {
         XCTAssertTrue(m.queue.isEmpty)
     }
 
+    /// A double-tap during the first launch's model load must not start a latched session.
+    ///
+    /// The gesture itself is valid — `TapLatch` says `.latch`, as asserted below — so nothing in the
+    /// key path stops it. What stops it is `canLatch`: `.hotkeyDown` refuses to start a dictation while
+    /// the model is loading, and latching over a dictation that never began leaves the bar claiming a
+    /// live microphone and makes the next press end a session that does not exist. Windows has guarded
+    /// this since `Coordinator.cs:952`; the Mac's key path had not.
+    func testADoubleTapWhileTheModelIsLoadingCannotLatch() {
+        var m = DictationMachine()
+        XCTAssertFalse(m.canLatch)
+        XCTAssertEqual(m.handle(.hotkeyDown(nil)), [.hud(.modelLoading(0))])
+        XCTAssertTrue(m.queue.isEmpty)
+
+        // The gesture does reach `.latch`, so the refusal above is the machine's and not an accident
+        // of the tap timing.
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        var latch = TapLatch()
+        XCTAssertEqual(latch.handle(.press, at: t0), [.startDictation])
+        XCTAssertEqual(latch.handle(.release, at: t0.addingTimeInterval(0.1)), [.holdOpen])
+        XCTAssertEqual(latch.handle(.press, at: t0.addingTimeInterval(0.2)), [.latch])
+
+        _ = m.handle(.modelReady)
+        XCTAssertTrue(m.canLatch)
+        XCTAssertEqual(m.handle(.hotkeyDown(nil)), [.startRecording, .hud(.listening)])
+    }
+
     func testHappyPath() {
         var m = ready()
         XCTAssertEqual(m.handle(.hotkeyDown(nil)), [.startRecording, .hud(.listening)])

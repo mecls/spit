@@ -33,6 +33,15 @@ struct DictationMachine {
     static let minimumMs = 400
 
     private(set) var phase: Phase = .modelLoading(0)
+
+    /// Whether a double-tap may latch.
+    ///
+    /// False while the model is still loading. `.hotkeyDown` already refuses to start a dictation then,
+    /// so latching would leave the bar's indicator claiming a live microphone over a session that never
+    /// began, and the next press would end a dictation that does not exist. The bar's mic button checked
+    /// this from the start; the key path did not. Windows guards the same thing at
+    /// `windows/Spit.App/App/Coordinator.cs:952` (`loading.IsReady` plus `machine.Phase is Ready`).
+    var canLatch: Bool { phase == .ready }
     private(set) var queue: [Dictation] = []
     private var recording: UUID?      // dictation currently capturing audio
     private var cancelledRecording = false

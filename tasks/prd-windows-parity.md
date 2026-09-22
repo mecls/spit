@@ -316,8 +316,11 @@ the Mac's directly — `dictations.asr_model` already namespaces the Windows cli
    these three"?** Not specified, deliberately — it depends which ones. Items 3 and 4 (clipboard
    restore, Win+V) are rules 9–10 and are unconditional; the rest are judgement.
    **Decided by: Miguel, during §3.2.**
-4. **Is rule 19 a real gap or already covered?** The Mac finishes the stream on `.discardRecording`;
-   whether it covers the second path Windows guards is unverified. **Decided by: the audit in §3.4.**
+4. ~~**Is rule 19 a real gap or already covered?**~~ **Closed 2026-09-22: a real gap.** The Mac finished
+   a stream in exactly two places — `.discardRecording` and `.transcribe` — and a stop the reducer
+   rejects ("nothing heard": under `minimumMs`, or no speech) reached neither, so the stream was left
+   running and the next dictation inherited it. Fixed the way Windows does it, with a
+   `transcribeRequested` flag read straight after `send(.audioStopped(…))`.
 5. **A spending ceiling for friends' text cleanup on the Ollama key.** Open question 6 from the
    original spec, still open, still unrelated to Windows — recorded here only so it is not lost when
    `tasks-spit-mac-windows.md` is closed out. **Decided by: Miguel.**

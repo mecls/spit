@@ -39,6 +39,14 @@ final class Coordinator: ObservableObject {
     /// Live transcription. Off unless `Preferences.liveTranscription` is on — the accuracy gate that
     /// would justify defaulting it on could not be measured (see the build's decisions log).
     let streaming = StreamingTranscriber()
+
+    /// Whether the reducer asked for a transcription in the turn `.audioStopped` was sent.
+    ///
+    /// Read straight after that `send`, which dispatches effects synchronously, so it answers "did
+    /// `.transcribe` fire?" — the difference between a stream that is about to be finished by the
+    /// transcribe path and one that has been abandoned. Windows keeps the same flag
+    /// (`windows/Spit.App/App/Coordinator.cs:89`).
+    private var transcribeRequested = false
     private lazy var streamProcessor = VoiceAudioProcessor(recorder: recorder)
     /// How many confirmed segments produced each dictation's text. 1 means no chunk boundary, which
     /// is what lets the skip gate leave it uncleaned.
@@ -134,6 +142,14 @@ final class Coordinator: ObservableObject {
 
         case .latch:
             cancelLatchWindow()
+            // Only latch over a dictation that actually started. The bar's mic button has always
+            // checked this; the key path had not, so a double-tap during the first launch's model
+            // load latched over nothing.
+            guard machine.canLatch else {
+                tapLatch.reset()
+                if case .modelLoading(let p) = machine.phase { showHUD(.modelLoading(p)) }
+                return
+            }
             isLatched = true
             hotkey.setLatched(true)
             render()
@@ -245,12 +261,22 @@ final class Coordinator: ObservableObject {
             hotkey.setListening(false)
             let (samples, ms) = recorder.stop()
             if Preferences.sounds { NSSound(named: "Pop")?.play() }
+            transcribeRequested = false
             send(.audioStopped(samples: samples, ms: ms, speech: EnergyGate.hasSpeech(samples)))
+            // A stop the reducer rejects — "nothing heard", under `minimumMs` or no speech — never
+            // reaches `.transcribe`, which is the only other place a stream is finished. Left
+            // running, the next dictation inherits it: it pastes this dictation's words and never
+            // decodes its own opening audio. `.discardRecording` covers Esc; this covers the stop
+            // that simply had nothing in it. Windows guards it at `Coordinator.cs:614`.
+            if !transcribeRequested, streaming.isRunning {
+                Task { [weak self] in _ = await self?.streaming.finish() }
+            }
         case .discardRecording:
             hotkey.setListening(false)
             Task { _ = await streaming.finish() }   // never leave a stream running past its dictation
             recorder.discard()
         case .transcribe(let id):
+            transcribeRequested = true
             // `.transcribe` is emitted synchronously from `.audioStopped`, which the `.stopRecording`
             // effect above sends in the same turn — so this is the first point at which the release
             // we just stamped has an id to belong to. Only dictations that got this far are
@@ -283,8 +309,29 @@ final class Coordinator: ObservableObject {
                             // Stitched, not appended. The segment end time is not a reliable
                             // boundary between what the stream transcribed and what it did not, so
                             // the seam is found in the text — see `Stitch`.
-                            text = Stitch.join(streamed: text, tail: t.text)
+                            let joined = Stitch.tryJoinAllowingTailSkip(streamed: text, tail: t.text)
                             asrMs = t.durationMs
+                            if joined.foundSeam || !Self.overlapHasSpeech(of: samples, coveredMs: covered, totalMs: d.audioMs) {
+                                // Either the seam was found, or the overlap the tail re-read was
+                                // silence — the user stopped talking a beat before letting go — so
+                                // no word in the tail can be a repeat and appending is right.
+                                text = joined.text
+                            } else if let whole = try? await self?.transcriber.transcribe(samples, hint: hint, progress: nil) {
+                                // No seam in an overlap that *did* hold speech. The tail's opening
+                                // words are the stream's closing words heard differently, and
+                                // appending pastes them twice — "Hi Joel Hi Joel, quick update…" in
+                                // a Windows CI run, "Hi Joel, quick Joel, quick update…" in review.
+                                // Text alone cannot tell that apart from new speech, so the only
+                                // trustworthy answer is one pass over the whole recording. Slower,
+                                // and correct; the same call the Windows client makes.
+                                log.info("stream tail found no seam in a spoken overlap: transcribing the whole recording")
+                                text = whole.text
+                                asrMs = t.durationMs + whole.durationMs
+                            } else {
+                                // The whole pass itself failed. Appending is the old behaviour and
+                                // may duplicate a few words; losing the tail would lose speech.
+                                text = joined.text
+                            }
                         }
                     }
                     self?.streamedSegments[id] = streamed.segments
@@ -440,6 +487,24 @@ final class Coordinator: ObservableObject {
 
         // What to transcribe starts earlier, so the word straddling the boundary is whole.
         return Array(samples[index(max(0, afterMs - overlapMs))...])
+    }
+
+    /// Whether the audio the tail pass re-reads — the `overlapMs` before the stream's end — holds
+    /// speech.
+    ///
+    /// When it does not, the user paused there, so no word in the tail can be a repeat of the stream
+    /// and a tail with no seam really is new speech. When it does, a tail with no seam is ambiguous,
+    /// and the caller pays for a whole-recording pass rather than guess.
+    static func overlapHasSpeech(of samples: [Float], coveredMs: Int, totalMs: Int) -> Bool {
+        guard totalMs > 0, !samples.isEmpty else { return true }
+        func index(_ ms: Int) -> Int {
+            min(max(Int((Double(ms) / Double(totalMs)) * Double(samples.count)), 0), samples.count)
+        }
+        let from = index(max(0, coveredMs - overlapMs))
+        let to = index(coveredMs)
+        // An empty slice cannot prove silence, and saying "speech" only ever costs a whole pass.
+        guard to > from else { return true }
+        return EnergyGate.hasSpeech(Array(samples[from..<to]))
     }
 
     /// Below this, a gap is a pause or a rounding error rather than a word.

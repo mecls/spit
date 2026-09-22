@@ -32,40 +32,71 @@ enum Stitch {
     /// false seam deletes every word between it and the real one.
     private static let minimumAnchor = 3
 
+    /// The Mac's original rule: the stitched text, or the tail appended when no seam is found.
     static func join(streamed: String, tail: String) -> String {
+        tryJoin(streamed: streamed, tail: tail).text
+    }
+
+    /// `join`, reporting whether a seam was actually found (or one side was empty).
+    ///
+    /// `foundSeam == false` means `text` is the tail simply appended — right when the tail is new speech,
+    /// a duplication of the overlap when it is not. Text alone cannot tell those two apart, which is the
+    /// whole reason the caller needs to know: appending blind is where "Hi Joel Hi Joel, quick update…"
+    /// came from.
+    static func tryJoin(streamed: String, tail: String) -> (text: String, foundSeam: Bool) {
+        tryJoin(streamed: streamed, tail: tail, maxTailSkip: 0)
+    }
+
+    /// Leading tail words the anchor may pass over before it starts.
+    ///
+    /// The overlap cut can leave a fragment — "board" of "dashboard" — or a word the two passes simply
+    /// heard differently, and an anchor forced to start at the tail's first word then finds no seam in
+    /// ordinary speech. The skipped words lie inside the overlap, so the stream already has them.
+    private static let tailSkip = 2
+
+    /// `tryJoin` allowing the anchor to start at tail word 0, 1 or 2 — longest anchor at the earliest
+    /// start first.
+    static func tryJoinAllowingTailSkip(streamed: String, tail: String) -> (text: String, foundSeam: Bool) {
+        tryJoin(streamed: streamed, tail: tail, maxTailSkip: tailSkip)
+    }
+
+    private static func tryJoin(streamed: String, tail: String, maxTailSkip: Int) -> (text: String, foundSeam: Bool) {
         let s = streamed.trimmingCharacters(in: .whitespacesAndNewlines)
         let t = tail.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return s }
-        guard !s.isEmpty else { return t }
+        guard !t.isEmpty else { return (s, true) }
+        guard !s.isEmpty else { return (t, true) }
 
         let sWords = s.split(separator: " ").map(String.init)
         let tWords = t.split(separator: " ").map(String.init)
-
         let sKeys = sWords.map(key)
-        // Capped by *both* sides. Capping only by the tail misses the seam whenever the tail is the
-        // longer of the two — the case where the stream produced almost nothing but a hallucination
-        // and the tail holds the real transcript.
-        let longest = min(anchorWords, tWords.count, sWords.count)
-        guard longest >= minimumAnchor else { return s + " " + t }
 
-        // Longest anchor first: a five-word match is evidence, a three-word match is nearly so, and
-        // taking the longest that matches keeps the weaker ones as a fallback rather than a
-        // shortcut. The overlap is only as long as it is — the tail's opening words can run past
-        // the seam — so a shorter anchor has to be tried before giving up.
-        for length in stride(from: longest, through: minimumAnchor, by: -1) {
-            let anchor = tWords.prefix(length).map(key)
-            // The *last* occurrence: a phrase repeated earlier in the dictation is not the seam,
-            // and cutting at the earliest match would throw away everything said in between.
-            for start in stride(from: sKeys.count - length, through: 0, by: -1) {
-                if Array(sKeys[start..<(start + length)]) == anchor {
-                    let kept = sWords.prefix(start).joined(separator: " ")
-                    return kept.isEmpty ? t : kept + " " + t
+        for skip in 0...max(0, maxTailSkip) {
+            // Capped by *both* sides. Capping only by the tail misses the seam whenever the tail is the
+            // longer of the two — the case where the stream produced almost nothing but a hallucination
+            // and the tail holds the real transcript.
+            let longest = min(anchorWords, tWords.count - skip, sWords.count)
+            guard longest >= minimumAnchor else { continue }
+
+            // Longest anchor first: a five-word match is evidence, a three-word match is nearly so, and
+            // taking the longest that matches keeps the weaker ones as a fallback rather than a
+            // shortcut. The overlap is only as long as it is — the tail's opening words can run past
+            // the seam — so a shorter anchor has to be tried before giving up.
+            for length in stride(from: longest, through: minimumAnchor, by: -1) {
+                let anchor = tWords.dropFirst(skip).prefix(length).map(key)
+                // The *last* occurrence: a phrase repeated earlier in the dictation is not the seam,
+                // and cutting at the earliest match would throw away everything said in between.
+                for start in stride(from: sKeys.count - length, through: 0, by: -1) {
+                    if Array(sKeys[start..<(start + length)]) == anchor {
+                        let kept = sWords.prefix(start).joined(separator: " ")
+                        let rest = tWords.dropFirst(skip).joined(separator: " ")
+                        return (kept.isEmpty ? rest : kept + " " + rest, true)
+                    }
                 }
             }
         }
 
-        // No overlap found: the tail really is new speech, which is the case this whole pass exists
-        // for. Appending is right.
-        return s + " " + t
+        // No seam. Appending is right only when the tail really is new speech, and this function cannot
+        // know: that is what the Bool is for.
+        return (s + " " + t, false)
     }
 }

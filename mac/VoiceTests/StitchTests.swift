@@ -72,4 +72,45 @@ final class StitchTests: XCTestCase {
         XCTAssertEqual(Stitch.join(streamed: "one two three four", tail: "one two three four five six"),
                        "one two three four five six")
     }
+
+    // MARK: - Back-ported from windows/Spit.Core.Tests/StreamTailCombineTests.cs
+
+    /// The Bool is the whole point of `tryJoin`: `false` means the text is the tail appended, which is
+    /// right for new speech and a duplication otherwise. The caller — not `Stitch` — decides which.
+    func testTryJoinReportsWhetherItFoundTheSeam() {
+        let stitched = Stitch.tryJoin(streamed: "the build on friday after the review",
+                                      tail: "friday after the review and more")
+        XCTAssertTrue(stitched.foundSeam)
+        XCTAssertEqual(stitched.text, "the build on friday after the review and more")
+
+        // Three words either side and no seam among them. Appended — and this exact pair pasted
+        // "Hi Joel, quick Joel, quick update." in a Windows review.
+        let appended = Stitch.tryJoin(streamed: "Hi Joel, quick", tail: "Joel, quick update.")
+        XCTAssertFalse(appended.foundSeam)
+        XCTAssertEqual(appended.text, "Hi Joel, quick Joel, quick update.")
+        // `join` is `tryJoin` with the answer thrown away, and must stay so.
+        XCTAssertEqual(appended.text, Stitch.join(streamed: "Hi Joel, quick", tail: "Joel, quick update."))
+    }
+
+    /// `join` and `tryJoin` keep the original rule — the anchor starts at the tail's first word.
+    /// Only `tryJoinAllowingTailSkip` may step over a fragment the overlap cut in half.
+    func testOnlyTheSkippingVariantStepsOverACutOffWord() {
+        let streamed = "the dashboard is running on Convex now"
+        let tail = "board is running on Convex now, and more"
+
+        XCTAssertFalse(Stitch.tryJoin(streamed: streamed, tail: tail).foundSeam)
+        XCTAssertTrue(Stitch.tryJoinAllowingTailSkip(streamed: streamed, tail: tail).foundSeam)
+    }
+
+    /// The fifth Windows review's case: the overlap cut "dashboard" to "board", the anchor had to start
+    /// at the tail's first word, no seam was found, and ordinary speech went to a whole second pass.
+    func testACutOffWordAtTheTailsStartStillFindsTheSeam() {
+        let joined = Stitch.tryJoinAllowingTailSkip(
+            streamed: "the MiraSite dashboard is running on Convex now",
+            tail: "board is running on Convex now, and the Olamaki lives on the VPS")
+
+        XCTAssertTrue(joined.foundSeam)
+        XCTAssertEqual(joined.text,
+                       "the MiraSite dashboard is running on Convex now, and the Olamaki lives on the VPS")
+    }
 }
