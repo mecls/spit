@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.IO;
-using System.Runtime.InteropServices;
 using Spit.Core;
 
 namespace Spit.App;
@@ -19,14 +17,7 @@ public static class KeyLog
 
     public static int Run()
     {
-        if (!Native.AllocConsole())
-        {
-            // Already attached to one (started from a terminal that gave us its console): print there.
-            HookLog.Info("key-log", $"AllocConsole failed: error {Marshal.GetLastPInvokeError()}");
-        }
-        // Console.Out may have been bound to "no console" before AllocConsole; rebind it to the new handles.
-        var output = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true };
-        Console.SetOut(output);
+        var (output, _) = DiagnosticConsole.Open("key-log");
 
         using var queue = new BlockingCollection<(SendOrPostCallback Callback, object? State)>();
         using var hook = new KeyboardHook(new QueueContext(queue));

@@ -196,7 +196,10 @@ hotkey that is going away (task 2.5).
 
 ## S3 — reading an elevated foreground window (pending)
 
-Subject: `windows/Spit.App/Platform/ElevationProbe.cs`. Spit runs non-elevated throughout.
+Harness: `Spit.exe --elevation-log` (`windows/Spit.App/Platform/ElevationLog.cs`). It prints, for each process
+that comes to the front, its integrity level, `IsElevated`, `BlocksInputFromSpit` and the paste route that answer
+picks — paste that output here. Subject: `windows/Spit.App/Platform/ElevationProbe.cs`. Spit runs non-elevated
+throughout; the harness's first line says whether it is.
 
 **Passes if** the probe answers correctly for both cases below. **On failure:** keep rule 30's
 "access-denied counts as elevated", which is the safe direction — it degrades to clipboard-only rather than
@@ -209,8 +212,11 @@ pasting into a window it cannot reach.
 
 ## S2 — which process renders the clipboard first under Clipboard History (pending)
 
-Subjects: `windows/Spit.App/Inject/ClipboardSession.cs`, `ClipboardSnapshot.cs`. Clipboard History **on**,
-delayed-render text carrying `ExcludeClipboardContentFromMonitorProcessing`.
+Harness: `Spit.exe --clip-log` (`windows/Spit.App/Platform/ClipLog.cs`). Each round promises a marker line by
+delayed rendering beside `ExcludeClipboardContentFromMonitorProcessing`, then prints every `WM_RENDERFORMAT`: the
+process that asked (the window holding the clipboard open), the milliseconds since the marker went up, and what was
+in front. Its first line says whether Clipboard History is on. One round per paste target; the marker is made-up
+text, so look for it in Win+V. Subjects: `windows/Spit.App/Inject/ClipboardSession.cs`, `ClipboardSnapshot.cs`.
 
 **Passes if** the target app triggers the first `WM_RENDERFORMAT` in all three hosts, which is what would let
 the 1.5 s restore shrink. **On failure:** keep rule 32's 1.5 s.
@@ -256,6 +262,10 @@ pwsh windows/scripts/pack.ps1 -PackVersion 0.2.0-test -OutputDir windows/Release
 pwsh windows/scripts/pack.ps1 -PackVersion 0.2.1-test -OutputDir windows/Releases/s5-0.2.1
 ```
 
+Then `pwsh windows/scripts/spike-s5.ps1 -Snapshot before` once 0.2.0-test is installed with a token, Launch at
+login on and one dictation done (it warns if any is missing — survival of something never there proves nothing),
+and `-Snapshot after` once 0.2.1-test is installed over it. The second run prints the table below filled in.
+
 **Passes if,** after installing 0.2.0-test and then 0.2.1-test: exactly one entry in Installed Apps, and the
 data directory, the stored token and the Run entry all survive. **On failure:** the `/spit` page tells users to
 uninstall first.
@@ -267,3 +277,41 @@ uninstall first.
 | stored token survives | |
 | Run registry entry survives | |
 | version the app reports | expect `0.2.1-test` |
+
+## Live transcription on real clips — session 3 (pending)
+
+Record, then replay (prd-windows-parity.md §3.3; rules 14-16):
+
+```
+windows/publish/Spit.exe --record-clips C:\spit-clips
+pwsh windows/scripts/spike-live.ps1 -Clips C:\spit-clips
+```
+
+`--record-clips` writes numbered WAVs through the same `AudioCapture` a dictation uses (Enter starts, Enter stops),
+so the replay is the recording sample for sample. `spike-live.ps1` runs each through the smoke test's live path with
+`--warm-pass` and prints the table below, rule 15's verdict, and `live-texts.md`: for every clip that missed, the
+stream's own text, the tail pass's text, the stitched result and the one-pass. The texts stay in that report folder,
+never in the app log, which holds no dictated text (rules 25-26).
+
+**Why a warm one-pass:** the smoke test's `transcribeMs` is a cold first transcription (right for S1), and the stream
+runs after it, warm. Rule 15's "≤ 1.3 × the one-pass time" against the cold number would flatter streaming by the
+~2× first-inference cost, so the comparison is against `warmTranscribeMs`, a second one-pass after the stream.
+
+**Holds if**, over at least 10 clips of 10-30 s: live text character-identical to one-pass on ≥ 8 of 10, and live
+time ≤ 1.3 × warm one-pass on all of them. **Otherwise** `LiveTranscription` stays `false` and the logs go to a
+numbered follow-up (rule 14). Run it once before tuning (task 5.1-5.2) and once after (task 5.6), into separate
+`-OutputDir`s.
+
+Before tuning:
+
+| clip | audio s | one-pass ms (warm) | live ms | live / one-pass | identical | same words | whole-pass fallback | segments | counted |
+|---|---|---|---|---|---|---|---|---|---|
+| | | | | | | | | | |
+
+Why each miss missed (task 5.3, from `live-texts.md`, written before any constant changes):
+
+After tuning:
+
+| clip | audio s | one-pass ms (warm) | live ms | live / one-pass | identical | same words | whole-pass fallback | segments | counted |
+|---|---|---|---|---|---|---|---|---|---|
+| | | | | | | | | | |

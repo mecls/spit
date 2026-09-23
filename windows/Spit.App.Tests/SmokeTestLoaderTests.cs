@@ -73,6 +73,39 @@ public sealed class SmokeTestLoaderTests : IDisposable
         Assert.Null(SmokeTest.Parse(["--smoke-test", "a.wav", "--model", "--report", "r.json"]));
     }
 
+    /// `--warm-pass` is read by `Program`, not `Parse`; a report path followed by it must still parse, or session 3's
+    /// driver gets usage errors for every clip.
+    [WindowsFact]
+    public void Parse_IsUnchangedByWarmPass()
+    {
+        Assert.Equal(("a.wav", "r.json", ModelCatalog.DefaultFile),
+            SmokeTest.Parse(["--smoke-test", "a.wav", "--report", "r.json", SmokeTest.WarmPassFlag]));
+    }
+
+    /// Session 3 records clips once and replays them many times; the replay must be the recording, sample for sample.
+    [WindowsFact]
+    public void ARecordedClip_ReplaysAsExactlyTheSamplesCaptureProduced()
+    {
+        Directory.CreateDirectory(temp.Path);
+        var samples = new float[AudioCapture.SampleRate * 2];
+        for (var i = 0; i < samples.Length; i++) samples[i] = 0.4f * MathF.Sin(i * 0.05f);
+
+        var path = ClipRecorder.NextPath(temp.Path);
+        ClipRecorder.Write(path, samples);
+
+        Assert.Equal("clip-01.wav", Path.GetFileName(path));
+        Assert.Equal("clip-02.wav", Path.GetFileName(ClipRecorder.NextPath(temp.Path)));
+        Assert.Equal(samples, SmokeTest.LoadSamples(path));
+    }
+
+    [WindowsFact]
+    public void ClipRecorder_NeedsAFolder()
+    {
+        Assert.Equal("clips", ClipRecorder.Parse([ClipRecorder.Flag, "clips"]));
+        Assert.Null(ClipRecorder.Parse([ClipRecorder.Flag]));
+        Assert.Null(ClipRecorder.Parse([ClipRecorder.Flag, "--model"]));
+    }
+
     [WindowsFact]
     public void ExpectedWords_SurviveTheMisspellingsWhisperIsKnownFor()
     {

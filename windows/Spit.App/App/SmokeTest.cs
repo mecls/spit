@@ -9,7 +9,7 @@ using Whisper.net.LibraryLoader;
 namespace Spit.App;
 
 /// <summary>
-/// `Spit.exe --smoke-test &lt;wav&gt; --report &lt;json&gt; [--model &lt;file&gt;]`: CI's proof that the published app
+/// `Spit.exe --smoke-test &lt;wav&gt; --report &lt;json&gt; [--model &lt;file&gt;] [--warm-pass]`: CI's proof that the published app
 /// transcribes on Windows (build spec AC-6). No UI, no hook, no single-instance lock, no network; the model
 /// must already be in the data folder (`SPIT_DATA_DIR` in CI) — nothing is downloaded.
 ///
@@ -18,7 +18,12 @@ namespace Spit.App;
 ///
 /// It runs the one-pass transcription the app falls back to, then the live path the way a dictation drives it:
 /// a `StreamingSession` fed 100 ms at a time in real time, finished, with the tail pass and the stitch. The
-/// report holds the fixture's transcript, which is test audio, never anyone's voice.
+/// report holds the fixture's transcript, which is test audio, never anyone's voice — except when
+/// `spike-live.ps1` replays clips someone recorded of themselves on purpose with `--record-clips`.
+///
+/// `--warm-pass` adds a second one-pass after the stream, for rule 15's "≤ 1.3 × the one-pass time": the first
+/// one-pass is a cold first transcription (S1 wants exactly that), the stream runs warm after it, and comparing
+/// the two would flatter streaming by the ~2× first-inference cost. CI and S1 pass no `--warm-pass`.
 /// </summary>
 public static class SmokeTest
 {
@@ -27,6 +32,9 @@ public static class SmokeTest
 
     /// Optional; defaults to `ModelCatalog.DefaultFile`, so CI's existing invocation keeps its meaning.
     public const string ModelFlag = "--model";
+
+    /// Optional; adds `warmTranscribeMs` (session 3's comparison, see above).
+    public const string WarmPassFlag = "--warm-pass";
 
     /// Malformed arguments: no report can be written, because there is nowhere to write it.
     public const int UsageExitCode = 2;
@@ -63,8 +71,8 @@ public static class SmokeTest
 
     /// Exit 0 only when the one-pass text is non-empty and contains one of the fixture's words; 1 otherwise,
     /// including any exception (reported with its type and message).
-    public static int Run(string wavPath, string reportPath, string modelFile) =>
-        RunAsync(wavPath, reportPath, modelFile).GetAwaiter().GetResult();
+    public static int Run(string wavPath, string reportPath, string modelFile, bool warmPass = false) =>
+        RunAsync(wavPath, reportPath, modelFile, warmPass).GetAwaiter().GetResult();
 
     /// The file as 16 kHz mono Float32, converted the way `AudioCapture` converts a microphone: NAudio decodes,
     /// channels are averaged, and WDL resamples in input-driven mode.
@@ -96,7 +104,7 @@ public static class SmokeTest
         return ExpectedWordStems.Any(stem => lower.Contains(stem, StringComparison.Ordinal));
     }
 
-    private static async Task<int> RunAsync(string wavPath, string reportPath, string modelFile)
+    private static async Task<int> RunAsync(string wavPath, string reportPath, string modelFile, bool warmPass)
     {
         var report = new Report { ModelFile = modelFile, WavFile = Path.GetFileName(wavPath) };
         try
@@ -126,9 +134,24 @@ public static class SmokeTest
             report.Language = once.Language;
             report.SkipGate = SkipGate.ReasonToClean(once.Text, "clean", once.Language)?.RawValue() ?? "skip";
 
-            (report.StreamedText, report.StreamMs, report.StreamSegments, report.WholePassFallback) = await StreamAsync(transcriber, samples, report.AudioMs, hint);
+            var live = await StreamAsync(transcriber, samples, report.AudioMs, hint);
+            report.StreamedText = live.Text;
+            report.StreamMs = live.Ms;
+            report.StreamSegments = live.Segments;
+            report.WholePassFallback = live.WholePass;
+            report.StreamRawText = live.RawText;
+            report.StreamCoveredMs = live.CoveredMs;
+            report.TailText = live.TailText;
+            report.OverlapHadSpeech = live.OverlapHadSpeech;
 
-            report.ExpectedWordsFound = ContainsExpectedWord(once.Text) && report.StreamedText is { } live && ContainsExpectedWord(live);
+            if (warmPass)
+            {
+                clock.Restart();
+                _ = await transcriber.TranscribeAsync(samples, hint, progress: null);
+                report.WarmTranscribeMs = (int)clock.ElapsedMilliseconds;
+            }
+
+            report.ExpectedWordsFound = ContainsExpectedWord(once.Text) && report.StreamedText is { } streamed && ContainsExpectedWord(streamed);
             report.Ok = once.Text.Length > 0 && report.ExpectedWordsFound;
             if (!report.Ok) report.Error = once.Text.Length == 0 ? "the transcription was empty" : "none of the fixture's expected words were transcribed";
         }
@@ -154,7 +177,7 @@ public static class SmokeTest
 
     /// The Coordinator's live path over a file: capture is simulated by releasing 100 ms of audio every 100 ms,
     /// then the key "comes up". The time reported is release to text — finish, tail pass and stitch.
-    private static async Task<(string? Text, int Ms, int Segments, bool WholePass)> StreamAsync(ISegmentTranscriber transcriber, float[] samples, int audioMs, TranscribeHint hint)
+    private static async Task<LiveRun> StreamAsync(ISegmentTranscriber transcriber, float[] samples, int audioMs, TranscribeHint hint)
     {
         var chunk = AudioCapture.SampleRate * ChunkMs / 1000;
         var fed = new Feed();
@@ -168,13 +191,17 @@ public static class SmokeTest
 
         var clock = Stopwatch.StartNew();
         var result = await session.FinishAsync();
-        if (result is null) return (null, (int)clock.ElapsedMilliseconds, 0, false);
+        if (result is null) return new LiveRun(null, (int)clock.ElapsedMilliseconds, 0, false, null, 0, null, null);
         var text = result.Text;
         var wholePass = false;
+        string? tailText = null;
+        bool? overlapHadSpeech = null;
         if (StreamTail.Tail(samples, result.CoveredMs, audioMs) is { } tail)
         {
             var t = await transcriber.TranscribeAsync(tail, hint, progress: null);
-            if (StreamTail.Combine(text, result.CoveredMs, t.Text, StreamTail.OverlapHasSpeech(samples, result.CoveredMs, audioMs)) is { } combined)
+            tailText = t.Text;
+            overlapHadSpeech = StreamTail.OverlapHasSpeech(samples, result.CoveredMs, audioMs);
+            if (StreamTail.Combine(text, result.CoveredMs, t.Text, overlapHadSpeech.Value) is { } combined)
             {
                 text = combined;
             }
@@ -185,8 +212,12 @@ public static class SmokeTest
                 text = (await transcriber.TranscribeAsync(samples, hint, progress: null)).Text;
             }
         }
-        return (text, (int)clock.ElapsedMilliseconds, result.Segments, wholePass);
+        return new LiveRun(text, (int)clock.ElapsedMilliseconds, result.Segments, wholePass, result.Text, result.CoveredMs, tailText, overlapHadSpeech);
     }
+
+    /// What the live path produced, and the pieces it was stitched from — rule 16's "log the streamed and tail
+    /// text before tuning anything", kept in the report file because the app log never holds dictated text.
+    private sealed record LiveRun(string? Text, int Ms, int Segments, bool WholePass, string? RawText, int CoveredMs, string? TailText, bool? OverlapHadSpeech);
 
     private static float[] Resample(float[] mono, int rate)
     {
@@ -255,6 +286,14 @@ public static class SmokeTest
         public int StreamMs { get; set; }
         public int StreamSegments { get; set; }
         public bool WholePassFallback { get; set; }
+        /// The stream's own text before the tail pass, the audio it covered, the tail pass's text, and whether the
+        /// overlap held speech: what `StreamTail.Combine` was given, so a missed seam can be read, not guessed at.
+        public string? StreamRawText { get; set; }
+        public int StreamCoveredMs { get; set; }
+        public string? TailText { get; set; }
+        public bool? OverlapHadSpeech { get; set; }
+        /// A one-pass after the stream, with the model warm; 0 without `--warm-pass`.
+        public int WarmTranscribeMs { get; set; }
         public bool HasSpeech { get; set; }
         public string? SkipGate { get; set; }
         public bool ExpectedWordsFound { get; set; }

@@ -72,6 +72,14 @@ internal static unsafe partial class Native
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool IsClipboardFormatAvailable(uint format);
 
+    /// The window that has the clipboard open right now — during `WM_RENDERFORMAT`, the reader's (`--clip-log`).
+    /// 0 when the reader opened it with a NULL owner.
+    [LibraryImport("user32.dll", SetLastError = true)]
+    public static partial nint GetOpenClipboardWindow();
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    public static partial nint GetClipboardOwner();
+
     // Global memory, which is what clipboard data lives in
 
     [LibraryImport("kernel32.dll", SetLastError = true)]

@@ -96,6 +96,19 @@ only trust the boxes if they were ticked as the work happened.
     - `-PackVersion` deliberately does not write `VERSION`: `scripts/check-version.sh` compares it to `mac/project.yml`, so a committed `0.2.1-test` would fail CI on both clients. It sets `InformationalVersion` only — `AssemblyVersion` would become the invalid `0.2.0-test.0` — which is what `Coordinator.ClientVersion` reads, so the two S5 installs identify themselves on the wire.
   - [x] 1.8 Run the Windows test suite on the Mac and record the passing count as the pre-session baseline (`Spit.Core.Tests` runs here; `Spit.App.Tests` is Windows-only)
     - **Baseline: 213 total, 0 failed, 0 skipped** (`Spit.Core.Tests`, 2026-09-22). `Spit.App.Tests` compiles here and must be counted on the PC.
+  - [x] 1.9 Give S2 a harness. Found while re-reading 2.8 against the code: nothing in `windows/` delay-renders or handles `WM_RENDERFORMAT` (rule 32's default places text directly), so "log which process triggers the first `WM_RENDERFORMAT`" had no code to observe and the PC session would have opened with Win32 authoring
+    - `Spit.exe --clip-log` (`Platform/ClipLog.cs`): a message-only owner window promises a made-up marker by delayed rendering beside the exclusion format, and prints each `WM_RENDERFORMAT` with the reader's process (`GetOpenClipboardWindow`, the window holding the clipboard open while it waits), the ms since placement, and the foreground process. It reads the Clipboard History registry setting on start, so the evidence says it was on. Enter runs the next round.
+  - [x] 1.10 Give S3 a harness, for the same reason: `ElevationProbe` answers only inside a paste, and nothing prints its answer
+    - `Spit.exe --elevation-log` (`Platform/ElevationLog.cs`): each new foreground process → integrity level, `IsElevated`, `BlocksInputFromSpit`, and the `PasteRoute` that answer picks. Its first line says whether Spit itself is elevated, which S3 needs to be false.
+    - The three console harnesses now share `DiagnosticConsole.Open`, lifted out of `KeyLog`.
+  - [x] 1.11 Make session 3 measurable. Two gaps, both found reading 5.1 against the code:
+    - **The texts had nowhere to go.** Rule 16 says log the streamed and tail text, but `Log.cs` forbids dictated text in the log (rules 25-26), and real dictations are spoken once, while rule 15 needs a one-pass over *the same audio* and 5.6 re-runs *the same clips*. So: `Spit.exe --record-clips <folder>` (`App/ClipRecorder.cs`) records numbered WAVs through the dictation's own `AudioCapture`, and the smoke report gained `streamRawText`, `streamCoveredMs`, `tailText` and `overlapHadSpeech` — exactly what `StreamTail.Combine` was given.
+    - **The time bar would have been measured against the wrong one-pass.** The smoke test's `transcribeMs` is a cold first transcription (right for S1, rule 4's note), and the stream runs warm after it; rule 15's ratio against it would flatter streaming by the ~2x first-inference cost. `--warm-pass` adds `warmTranscribeMs`, a one-pass after the stream. CI and S1 pass no `--warm-pass`, so neither changes.
+    - `windows/scripts/spike-live.ps1 -Clips <folder>` replays every clip, prints rule 15's table and verdict, the 5.2 fallback count, and writes `live-texts.md` with the texts of every miss for 5.3. Dry-run on the Mac against a stand-in binary: an identical clip, a punctuation-only miss, a whole-pass fallback, a clip at x1.35, an out-of-range clip, a run with no texts, fewer than ten clips, and a missing folder all come out as intended.
+    - Tests (Windows-only, compile-checked here): `Parse_IsUnchangedByWarmPass`, `ARecordedClip_ReplaysAsExactlyTheSamplesCaptureProduced`, `ClipRecorder_NeedsAFolder`.
+  - [x] 1.12 Make S5 a before/after script, so the PC session records evidence rather than eyeballing Installed Apps
+    - `windows/scripts/spike-s5.ps1 -Snapshot before|after`: Installed Apps entries (HKCU and HKLM uninstall keys), the app's version, the data folder's files, Credential Manager targets under `co.miraside.voice` (the target only — the token is never read), the Run value and whether it still points at a file. `before` warns when there is no token, no Run entry or no data, since surviving the upgrade proves nothing about something that was never there; `after` prints S5's table and verdict.
+    - All four `.ps1` files parse under PowerShell 7.6 on the Mac; `spike-s5.ps1` touches the registry and `cmdkey`, so only its parse is checked here.
 
 - [ ] 2.0 **(PC)** Session 1 — run the five spikes in rule 3's order (S4 → S3 → S2 → S1 → S5) and commit the evidence
   - [ ] 2.0a Build the two S5 installers first, since 1.7 could not (`pack.ps1 -PackVersion 0.2.0-test -OutputDir windows/Releases/s5-0.2.0`, then the same for `0.2.1-test`). Doing it now means S5 at the end of the session is an install, not a build
@@ -104,15 +117,15 @@ only trust the boxes if they were ticked as the work happened.
   - [ ] 2.3 **S4:** check `vkE8` menu masking in **both** Notepad and File Explorer — they use different menu implementations, and rule 12 requires both (`windows/Spit.App/Platform/MenuMask.cs`)
   - [ ] 2.4 **S4:** confirm nothing is swallowed (rule 11) — Right Ctrl+C still copies, AltGr+2 still types `@`
   - [ ] 2.5 Write S4's raw evidence into `docs/SPIKES.md`. **If masking failed in either app, apply rule 2's branch now** — drop `rightAlt` — before any other spike runs against a hotkey that is going away
-  - [ ] 2.6 **S3:** from non-elevated Spit, read the foreground process with Notepad running as administrator, then with normal Notepad; confirm `ElevationProbe` answers correctly for both
+  - [ ] 2.6 **S3:** from non-elevated Spit (`Spit.exe --elevation-log`, 1.10), read the foreground process with Notepad running as administrator, then with normal Notepad; confirm `ElevationProbe` answers correctly for both
   - [ ] 2.7 Write S3's two answers into `docs/SPIKES.md`
-  - [ ] 2.8 **S2:** Clipboard History **on**, delayed-render text carrying `ExcludeClipboardContentFromMonitorProcessing`; paste into Notepad, Chrome and Word; log which process triggers the first `WM_RENDERFORMAT` in each
+  - [ ] 2.8 **S2:** Clipboard History **on**, `Spit.exe --clip-log` (1.9), one round per target; paste into Notepad, Chrome and Word; record which process triggers the first `WM_RENDERFORMAT` in each
   - [ ] 2.9 **S2:** press Win+V after each paste and confirm the dictation is absent. Rule 9 is unconditional — if the text is in history, stop the session and fix it before continuing
   - [ ] 2.10 Write S2's three process names into `docs/SPIKES.md`
   - [ ] 2.11 **S1:** run `spike-s1.ps1` and collect the JSON reports
   - [ ] 2.12 **S1:** check every Vulkan row has a `BackendLog` device line naming a real GPU. If Vulkan silently fell through to CPU (rule 5), the numbers are void — fix the runtime resolution and re-run before recording anything
   - [ ] 2.13 Write S1's 12 medians and every device string into `docs/SPIKES.md`
-  - [ ] 2.14 **S5:** install `0.2.0-test`, then `0.2.1-test`; confirm exactly one entry in Installed Apps, and that the data directory, stored token and Run entry all survive
+  - [ ] 2.14 **S5:** install `0.2.0-test` (token pasted, Launch at login on, one dictation), `spike-s5.ps1 -Snapshot before`, install `0.2.1-test`, `spike-s5.ps1 -Snapshot after` (1.12); confirm exactly one entry in Installed Apps, and that the data directory, stored token and Run entry all survive
   - [ ] 2.15 Write S5's result into `docs/SPIKES.md`, then commit all five sections
 
 - [ ] 3.0 Act on what the spikes returned — the hotkey, the clipboard delay, and the default model
@@ -143,12 +156,12 @@ only trust the boxes if they were ticked as the work happened.
   - [ ] 4.14 Triage every failure into one of spec §3.2's three buckets — blocks-release, documented-limitation, or follow-up — and write the bucket down against the item. An item silently skipped is a failed checklist (§5.2)
 
 - [ ] 5.0 **(PC)** Session 3 — measure, then fix, live transcription
-  - [ ] 5.1 Turn live transcription on and dictate 10 real clips of 10–30 s, capturing the smoke `Report` fields per clip: `WholePassFallback`, `StreamMs`, `StreamSegments`, `StreamedText`, `Text`, `TranscribeMs`
+  - [ ] 5.1 Record 10+ real clips of 10–30 s with `Spit.exe --record-clips <folder>` and run `spike-live.ps1 -Clips <folder>` (1.11), capturing the smoke `Report` fields per clip: `WholePassFallback`, `StreamMs`, `StreamSegments`, `StreamedText`, `Text`, `TranscribeMs`
   - [ ] 5.2 Count how many of the 10 came back with `WholePassFallback == true`. That is the baseline, and it is the failure rule 15 exists to remove — the field already measures it, so no new instrumentation is needed
   - [ ] 5.3 Read the logged streamed text against the tail text for the failing clips and identify **why** no seam was found — a word boundary, a repeated phrase, a gap longer than `MinimumTailMs`. Rule 16: do not touch a constant before this is written down
   - [ ] 5.4 Tune `Stitch.TryJoinAllowingTailSkip` (`windows/Spit.Core/Asr/Stitch.cs:46`) and `StreamTail.OverlapMs` (`StreamTail.cs:15`, currently 1500) against those logs — not against the CI fixture, which is one clip of read speech
   - [ ] 5.5 Keep `StitchTests.cs`, `StreamTailTests.cs` and `StreamingPolicyTests.cs` passing throughout. If a tuning change needs one of them edited, the change is probably wrong
-  - [ ] 5.6 Re-run the same 10 clips and check rule 15's two conditions: streamed+stitched text character-identical to one-pass on **≥ 8 of 10**, and release-to-final-text **≤ 1.3 × the one-pass time on all 10**
+  - [ ] 5.6 Re-run the same 10 clips (`spike-live.ps1` with a new `-OutputDir`) and check rule 15's two conditions: streamed+stitched text character-identical to one-pass on **≥ 8 of 10**, and release-to-final-text **≤ 1.3 × the one-pass time on all 10**
   - [ ] 5.7 If both hold, record it in `docs/SPIKES.md` and raise whether `LiveTranscription` should still default to `false` — that is Miguel's call, not the builder's. If either fails, leave the default at `false` and attach the logs to a numbered follow-up (rule 14)
 
 - [x] 6.0 Back-port the three Windows fixes to the Mac *(no PC needed — can run in parallel with 2.0–5.0)*
