@@ -310,7 +310,8 @@ docs). Where no primary source exists, the rule names the spike in §5 that sett
 
 33. **The clipboard snapshot copies memory formats only.** The allowed formats are `CF_UNICODETEXT`,
     `CF_DIBV5` / `CF_DIB`, `CF_HDROP`, and the registered formats `HTML Format`, `Rich Text Format` and
-    `PNG`, each ≤ 5 MB. GDI-handle formats (`CF_BITMAP`, `CF_ENHMETAFILE`) and formats still waiting for
+    `PNG`, each ≤ 5 MB — except the two bitmap formats, ≤ 128 MB (amended 2026-09-23: a Windows screenshot is an
+    uncompressed DIB, 8.3 MB at 1920×1080, and leaving it out emptied the clipboard; `prd-windows-parity.md` rule 10). GDI-handle formats (`CF_BITMAP`, `CF_ENHMETAFILE`) and formats still waiting for
     delayed rendering are left out, the same trade-off as `PasteboardSnapshot.allowedTypes`.
     `OpenClipboard` fails while another window holds the clipboard, so opening retries every 10 ms for up
     to 200 ms. If it still fails, the dictation isn't pasted: the bar says "Couldn't use the

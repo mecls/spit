@@ -141,7 +141,6 @@ public sealed class DictationMachine
             case MachineEvent.Refined r:
             {
                 if (IndexOf(r.Id) is not { } i) return [];
-                var effects = new List<Effect>();
                 switch (r.Result)
                 {
                     case RefineResult.Cleaned c: queue[i].Cleaned = c.Text; break;
@@ -151,13 +150,14 @@ public sealed class DictationMachine
                         queue[i].LlmModel = CleanupEngine.Skipped;
                         break;
                     case RefineResult.RawFallback fb:
+                        // Said once the paste is done (`Inserted`), not now: `Done` followed within ~30 ms and
+                        // replaced it before anyone could read it, and a clipboard-only paste's own message
+                        // (an admin window) came before it and was replaced by it.
                         queue[i].Fallback = fb.Reason; queue[i].Cleaned = null;
-                        effects.Add(new Effect.Hud(new HUDState.Message(
-                            fb.Reason == FallbackReason.Unauthorized ? Strings.TokenInvalid : Strings.PastedRaw)));
                         break;
                 }
                 queue[i].Stage = DictationStage.ReadyToInsert;
-                return [.. InsertHeadIfReady(), .. effects];
+                return InsertHeadIfReady();
             }
 
             case MachineEvent.Inserted ins:
@@ -169,11 +169,18 @@ public sealed class DictationMachine
                 // in the coordinator, which keeps this reducer pure and its effects comparable in tests.
                 var via = queue[i].LlmModel == CleanupEngine.Skipped ? Strings.ViaSkipped
                     : (queue[i].Cleaned is not null ? Strings.ViaCleaned : null);
+                var fallback = queue[i].Fallback;
                 queue.RemoveAt(i);
                 var effects = new List<Effect> { new Effect.ReportInjected(ins.Id, ins.How) };
                 var next = InsertHeadIfReady();
                 effects.AddRange(next);
-                if (next.Count == 0) effects.Add(new Effect.Hud(new HUDState.Done(preview, via)));
+                // A raw fallback says so in place of `Done`, for as long as `Done` would have stayed.
+                if (next.Count == 0)
+                {
+                    effects.Add(new Effect.Hud(fallback is { } reason
+                        ? new HUDState.Message(reason == FallbackReason.Unauthorized ? Strings.TokenInvalid : Strings.PastedRaw)
+                        : new HUDState.Done(preview, via)));
+                }
                 return effects;
             }
 

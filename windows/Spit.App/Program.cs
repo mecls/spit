@@ -13,7 +13,9 @@ public static class Program
     public static int Main(string[] args)
     {
         // Must be the first line (rule 44): Velopack's install/uninstall hooks run here and exit.
-        VelopackApp.Build().Run();
+        VelopackApp.Build()
+            .OnBeforeUninstallFastCallback(_ => new LaunchAtLogin().RemoveIfItLaunchesThisInstall())
+            .Run();
 
         // The spike diagnostics (docs/SPIKES.md S4, S2, S3): consoles, no UI, no single-instance lock.
         if (args.Contains(KeyLogFlag)) return KeyLog.Run();

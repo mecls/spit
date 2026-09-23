@@ -113,9 +113,24 @@ public sealed class DictationMachineTests
         var id = m.Queue[0].ClientId;
         _ = m.Handle(new MachineEvent.AudioStopped([1], 1000, true));
         _ = m.Handle(new MachineEvent.Transcribed(id, "raw text", "en", 1));
-        Assert.Equal(Fx(new Effect.Insert(id, "raw text"), Hud(new HUDState.Message(Strings.PastedRaw))),
+        Assert.Equal(Fx(new Effect.Insert(id, "raw text")),
             m.Handle(new MachineEvent.Refined(id, new RefineResult.RawFallback(FallbackReason.Offline))));
-        Assert.Equal(Fx(new Effect.ReportInjected(id, Injected.Raw), Hud(new HUDState.Done("raw text", null))),
+        // Said after the paste, in place of Done: said before it, Done replaced it within milliseconds.
+        Assert.Equal(Fx(new Effect.ReportInjected(id, Injected.Raw), Hud(new HUDState.Message(Strings.PastedRaw))),
+            m.Handle(new MachineEvent.Inserted(id, Injected.Raw)));
+    }
+
+    [Fact]
+    public void testAnInvalidTokenSaysSoOnceTheRawTextIsPasted()
+    {
+        var m = Ready();
+        _ = m.Handle(new MachineEvent.HotkeyDown(null)); _ = m.Handle(new MachineEvent.HotkeyUp());
+        var id = m.Queue[0].ClientId;
+        _ = m.Handle(new MachineEvent.AudioStopped([1], 1000, true));
+        _ = m.Handle(new MachineEvent.Transcribed(id, "raw text", "en", 1));
+        Assert.Equal(Fx(new Effect.Insert(id, "raw text")),
+            m.Handle(new MachineEvent.Refined(id, new RefineResult.RawFallback(FallbackReason.Unauthorized))));
+        Assert.Equal(Fx(new Effect.ReportInjected(id, Injected.Raw), Hud(new HUDState.Message(Strings.TokenInvalid))),
             m.Handle(new MachineEvent.Inserted(id, Injected.Raw)));
     }
 

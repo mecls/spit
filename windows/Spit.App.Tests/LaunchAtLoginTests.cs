@@ -34,6 +34,34 @@ public sealed class LaunchAtLoginTests
         }
     }
 
+    /// Checklist item 15: uninstalling removes the startup entry it would otherwise leave pointing at a deleted file —
+    /// but only one that launches this install.
+    [WindowsFact]
+    public void Uninstall_RemovesOnlyAValueThatLaunchesThisInstall()
+    {
+        var ours = "SpitTest-" + Guid.NewGuid().ToString("N");
+        var theirs = "SpitTest-" + Guid.NewGuid().ToString("N");
+        const string exe = @"C:\Users\friend\AppData\Local\Spit\Spit.exe";
+        try
+        {
+            new LaunchAtLogin(ours, exe).SetEnabled(true);
+            new LaunchAtLogin(theirs, @"C:\src\spit\windows\Spit.App\bin\Release\Spit.exe").SetEnabled(true);
+
+            new LaunchAtLogin(ours, exe).RemoveIfItLaunchesThisInstall();
+            new LaunchAtLogin(theirs, exe).RemoveIfItLaunchesThisInstall();
+
+            Assert.False(new LaunchAtLogin(ours, exe).IsEnabled());
+            Assert.True(new LaunchAtLogin(theirs, exe).IsEnabled());
+            new LaunchAtLogin(ours, exe).RemoveIfItLaunchesThisInstall();   // nothing there is not an error
+        }
+        finally
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(LaunchAtLogin.RunKeyPath, writable: true);
+            key?.DeleteValue(ours, throwOnMissingValue: false);
+            key?.DeleteValue(theirs, throwOnMissingValue: false);
+        }
+    }
+
     [WindowsFact]
     public void InstalledByVelopack_PointsAtTheStubThatSurvivesUpdates()
     {

@@ -91,8 +91,19 @@ final class DictationMachineTests: XCTestCase {
         let id = m.queue[0].clientId
         _ = m.handle(.audioStopped(samples: [1], ms: 1000, speech: true))
         _ = m.handle(.transcribed(id, text: "raw text", language: "en", ms: 1))
-        XCTAssertEqual(m.handle(.refined(id, .rawFallback(.offline))), [.insert(id, "raw text"), .hud(.message(Strings.pastedRaw))])
-        XCTAssertEqual(m.handle(.inserted(id, .raw)), [.reportInjected(id, .raw), .hud(.done(preview: "raw text", via: nil))])
+        XCTAssertEqual(m.handle(.refined(id, .rawFallback(.offline))), [.insert(id, "raw text")])
+        // Said after the paste, in place of `.done`: said before it, `.done` replaced it within milliseconds.
+        XCTAssertEqual(m.handle(.inserted(id, .raw)), [.reportInjected(id, .raw), .hud(.message(Strings.pastedRaw))])
+    }
+
+    func testAnInvalidTokenSaysSoOnceTheRawTextIsPasted() {
+        var m = ready()
+        _ = m.handle(.hotkeyDown(nil)); _ = m.handle(.hotkeyUp)
+        let id = m.queue[0].clientId
+        _ = m.handle(.audioStopped(samples: [1], ms: 1000, speech: true))
+        _ = m.handle(.transcribed(id, text: "raw text", language: "en", ms: 1))
+        XCTAssertEqual(m.handle(.refined(id, .rawFallback(.unauthorized))), [.insert(id, "raw text")])
+        XCTAssertEqual(m.handle(.inserted(id, .raw)), [.reportInjected(id, .raw), .hud(.message(Strings.tokenInvalid))])
     }
 
     func testTranscriptionFailureDropsTheDictation() {

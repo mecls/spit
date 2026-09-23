@@ -87,6 +87,22 @@ internal static class ClipboardTestSupport
     }
 
     /// A 1×1 32-bit `CF_DIB`: a BITMAPINFOHEADER followed by one BGRA pixel.
+    /// A 32-bit top-down DIB of `width`×`height` with a pattern in it, the size Windows puts on the clipboard for a
+    /// screenshot of that resolution.
+    public static byte[] Dib(int width, int height)
+    {
+        var pixels = width * height * 4;
+        var dib = new byte[40 + pixels];
+        BitConverter.TryWriteBytes(dib.AsSpan(0), 40);          // biSize
+        BitConverter.TryWriteBytes(dib.AsSpan(4), width);       // biWidth
+        BitConverter.TryWriteBytes(dib.AsSpan(8), -height);     // biHeight: negative is top-down
+        BitConverter.TryWriteBytes(dib.AsSpan(12), (short)1);   // biPlanes
+        BitConverter.TryWriteBytes(dib.AsSpan(14), (short)32);  // biBitCount
+        BitConverter.TryWriteBytes(dib.AsSpan(20), pixels);     // biSizeImage
+        for (var i = 40; i < dib.Length; i++) dib[i] = (byte)(i * 7);
+        return dib;
+    }
+
     public static byte[] OnePixelDib()
     {
         var dib = new byte[44];

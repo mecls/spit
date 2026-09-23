@@ -278,6 +278,36 @@ uninstall first.
 | Run registry entry survives | |
 | version the app reports | expect `0.2.1-test` |
 
+### On a GitHub runner (2026-09-23, `windows-latest`, run 35922307917) — not the PC
+
+`.github/workflows/spike-s5.yml`: both builds packed by `pack.ps1`, 0.2.0-test installed with `--silent`, the token
+and Run value seeded in the app's own formats (Launch at login is off by default, so nothing else writes them),
+Spit left running, 0.2.1-test installed over it with `--silent`. `spike-s5.ps1`'s output, verbatim:
+
+```
+setup 0.2.0-test exit 0
+  Installed Apps entries: 1  app version: 0.2.0-test  data files: 2  token targets: 1  Run entry: "C:\Users\runneradmin\AppData\Local\Spit\Spit.exe"
+Spit processes before the upgrade: 1
+setup 0.2.1-test exit 0
+  Installed Apps entries: 1  app version: 0.2.1-test  data files: 3  token targets: 1  Run entry: "C:\Users\runneradmin\AppData\Local\Spit\Spit.exe"
+```
+
+| check | result | what was seen |
+|---|---|---|
+| exactly one entry in Installed Apps | pass | 1 (Spit 0.2.1) |
+| the app is the newer build | pass | before 0.2.0-test, after 0.2.1-test |
+| the data directory survived | pass | 2 files before, 3 after |
+| the stored token survived | pass | 1 target(s) before, 1 after |
+| the Run entry survived and still points at a file | pass | before and after `"C:\Users\runneradmin\AppData\Local\Spit\Spit.exe"` (target exists: True) |
+
+Worth knowing: Installed Apps shows `DisplayVersion` **0.2.1**, without `-test` — Velopack drops the pre-release
+label there; the app itself reports 0.2.1-test. The two files before the upgrade are the day's log and
+`settings.json`, the latter written by the first launch alone (task 3.7's pin, seen working in a real install).
+
+What this does not cover, and the PC run (task 2.14) still must: a desktop Windows 11 rather than Windows Server, a
+non-elevated user, the installer downloaded through Edge and run by double-click rather than `--silent`, and a token
+and Run entry written by Spit's own Settings page rather than seeded.
+
 ## Live transcription on real clips — session 3 (pending)
 
 Record, then replay (prd-windows-parity.md §3.3; rules 14-16):

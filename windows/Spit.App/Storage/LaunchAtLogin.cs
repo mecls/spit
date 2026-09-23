@@ -75,4 +75,23 @@ public sealed class LaunchAtLogin
             throw new InvalidOperationException(e.Message, e);
         }
     }
+
+    /// Velopack's uninstall hook (`Program.Main`). Velopack removes the program but not the Run value Settings
+    /// wrote, and left behind, Startup apps lists a Spit whose file is gone (checklist item 15). Only a value that
+    /// launches this install is removed; one pointing anywhere else — a dev build's — is not this uninstall's to
+    /// touch. Never throws: an uninstall must not fail over a startup entry.
+    public void RemoveIfItLaunchesThisInstall()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
+            if (key?.GetValue(ValueName) is not string value) return;
+            if (!string.Equals(value.Trim().Trim('"'), ExecutablePath, StringComparison.OrdinalIgnoreCase)) return;
+            key.DeleteValue(ValueName, throwOnMissingValue: false);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or SecurityException)
+        {
+            Log.Failure("launch-at-login", "remove on uninstall", e);
+        }
+    }
 }

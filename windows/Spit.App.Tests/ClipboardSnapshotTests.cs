@@ -44,6 +44,35 @@ public sealed class ClipboardSnapshotTests
         });
     }
 
+    /// Checklist item 3 with a real screenshot's size: a 1920×1080 DIB is 8.3 MB, over the 5 MB every other format
+    /// gets. Left out, the restore emptied the clipboard and the user's screenshot was gone.
+    [WindowsFact]
+    public void AFullHdScreenshot_ComesBackAfterTheDictation()
+    {
+        WithOwnerWindow(owner =>
+        {
+            var dib = Dib(1920, 1080);
+            Assert.True(dib.Length > ClipboardSnapshot.MaxBytes);
+            Assert.True(RunPatiently(owner, "test setup", () => ClipboardSession.Empty() && ClipboardSession.SetData(Native.CF_DIB, dib)));
+
+            var snapshot = ClipboardSnapshot.Capture(owner);
+            Assert.NotNull(snapshot);
+            Assert.Contains(snapshot.Items, item => item.Key == Native.CF_DIB);
+
+            Assert.True(RunPatiently(owner, "test overwrite", () => ClipboardSession.PlaceText("dictated text")));
+            Assert.True(snapshot.Restore(owner));
+
+            byte[]? restored = null;
+            Assert.True(RunPatiently(owner, "test read", () =>
+            {
+                restored = ClipboardSession.ReadData(Native.CF_DIB, ClipboardSnapshot.MaxBitmapBytes);
+                return true;
+            }));
+            Assert.NotNull(restored);
+            Assert.Equal(dib, restored[..dib.Length]);
+        });
+    }
+
     [WindowsFact]
     public void FormatsOverFiveMegabytes_AreLeftOut()
     {

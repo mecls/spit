@@ -204,8 +204,11 @@ final class Coordinator: ObservableObject {
         let wasLatched = isLatched
         clearLatch()
         tapLatch.reset()
+        transcribeRequested = false
         send(.hotkeyUp)
-        if wasLatched { showHUD(.message(Strings.latchCapReached)) }
+        // Only when the stop reached `.transcribe`. A session the reducer rejected (too little speech
+        // in 90 s) has just said "Nothing heard", and "— transcribing" over it read as a dictation lost.
+        if wasLatched, transcribeRequested { showHUD(.message(Strings.latchCapReached)) }
     }
 
     func send(_ e: MachineEvent) {

@@ -112,6 +112,15 @@ only trust the boxes if they were ticked as the work happened.
     - `.github/workflows/spike-s5.yml` runs it on a GitHub Windows runner: packs both builds, installs 0.2.0-test, seeds the token and Run value in the app's own formats, leaves Spit running, installs 0.2.1-test over it and fails on any check. Not a substitute for 2.14 — a runner is Windows Server, elevated, with no Edge download — but it runs the script on real Windows before the PC depends on it, and re-runs whenever packing or storage changes.
     - `windows/.gitignore` now ignores `spike-s1/` and `spike-s5/`: S1's 36 reports would otherwise have landed as untracked files on the PC.
 
+  - [x] 1.13 Pre-flight the 15-item checklist against the code, so session 2 finds what only a PC can find. Three read-only reviews traced every item; each finding below was checked against the code before anything changed. Five were real and are fixed, with tests:
+    - **Item 3 — a screenshot on the clipboard was destroyed.** Rule 33's 5 MB cap was the Mac's, where a screenshot is compressed PNG; a Windows screenshot is an uncompressed DIB, 8.3 MB at 1920×1080. It was left out of the snapshot, and the restore then emptied the clipboard. Bitmaps now get 128 MB (`ClipboardSnapshot.MaxBitmapBytes`; rule 33 amended in `prd-spit-mac-windows.md`). Test: `AFullHdScreenshot_ComesBackAfterTheDictation`.
+    - **Items 9 and 5 — "Pasted raw" was unreadable, and could hide the admin message.** The reducer said it when the fallback was decided, before the paste; `Done` replaced it ~30 ms later on Windows (~150 ms on the Mac). And in an admin window a clipboard-only paste completes synchronously, so its "Admin window — text copied" came first and "Pasted raw" replaced it: the text sat on the clipboard with nothing saying so — rule 13's silent failure. The fallback message now replaces `Done` after the paste, on **both clients** (shared reducer; `testRawFallbackPastesRawAndReportsRaw` updated on both, `testAnInvalidTokenSaysSoOnceTheRawTextIsPasted` added on both).
+    - **Item 12 — a Mode change on the PC could put back the Mac's old hotkey.** `PUT /v1/settings` replaces the whole record, and the PC merged onto its copy from the last sync, up to 10 minutes old. It now reads `/v1/me` just before the PUT, and sends nothing if that read fails. Tests: `testModeChangeEchoesTheHotkeyTheServerHoldsNowNotAtTheLastSync`, `testNoPutWhenTheServerCannotBeReadJustBefore`.
+    - **Item 15 — uninstalling left a "Spit" startup entry pointing at a deleted file.** Velopack removes the program, not the Run value. `OnBeforeUninstallFastCallback` now removes it when it launches this install (`LaunchAtLogin.RemoveIfItLaunchesThisInstall`). Test: `Uninstall_RemovesOnlyAValueThatLaunchesThisInstall`; `spike-s5.yml` now also uninstalls **with Spit running**, which nothing covered — CI's own uninstall stops Spit first.
+    - **Item 6 — "Reached the 90 s limit — transcribing" over a session that was not transcribed.** A latched session with too little speech is rejected ("Nothing heard"), and the cap message then overwrote it. Shown now only when the stop reached `.transcribe`, on both clients.
+    - The rest are risks only a PC can settle; each is noted on its 4.x item below, with how to tell.
+    - After 1.13: Windows core **218** passing, parity Swift 113 / C# 113, Mac **155 tests, 1 skipped, 0 failures** (2026-09-23). The Windows-only tests are counted by CI (`app` job).
+
 - [ ] 2.0 **(PC)** Session 1 — run the five spikes in rule 3's order (S4 → S3 → S2 → S1 → S5) and commit the evidence
   - [ ] 2.0a Build the two S5 installers first, since 1.7 could not (`pack.ps1 -PackVersion 0.2.0-test -OutputDir windows/Releases/s5-0.2.0`, then the same for `0.2.1-test`). Doing it now means S5 at the end of the session is an install, not a build
   - [ ] 2.1 Install from `Spit-Setup.exe` the way a friend would — downloaded, not copied from a build folder — and confirm the install needs no admin prompt
@@ -128,6 +137,7 @@ only trust the boxes if they were ticked as the work happened.
   - [ ] 2.12 **S1:** check every Vulkan row has a `BackendLog` device line naming a real GPU. If Vulkan silently fell through to CPU (rule 5), the numbers are void — fix the runtime resolution and re-run before recording anything
   - [ ] 2.13 Write S1's 12 medians and every device string into `docs/SPIKES.md`
   - [ ] 2.14 **S5:** install `0.2.0-test` (token pasted, Launch at login on, one dictation), `spike-s5.ps1 -Snapshot before`, install `0.2.1-test`, `spike-s5.ps1 -Snapshot after` (1.12); confirm exactly one entry in Installed Apps, and that the data directory, stored token and Run entry all survive
+    - Passed on a GitHub `windows-latest` runner first (2026-09-23, run 35922307917; `docs/SPIKES.md` S5). That settles the script and Velopack's upgrade on Windows Server; the PC run still owes a desktop Windows 11, a non-elevated user, an Edge download and a token and Run entry written by Spit itself
   - [ ] 2.15 Write S5's result into `docs/SPIKES.md`, then commit all five sections
 
 - [ ] 3.0 Act on what the spikes returned — the hotkey, the clipboard delay, and the default model
@@ -141,21 +151,33 @@ only trust the boxes if they were ticked as the work happened.
     - **It held for most installs and not all.** `SettingsStore.Update` rewrites the whole record, `modelFile` included, on any change — onboarding, a synced mode or language — so those installs have their model pinned. But an install that never wrote `settings.json` (onboarding never finished, nothing changed) loaded `Settings.Defaults`, and a changed `DefaultFile` would have switched it silently and started the download rule 7 forbids.
     - Fixed before anyone has installed it: `SettingsStore` writes its defaults on a first launch, so the model a build starts with is always in the file. Test: `SettingsStoreTests.AFirstLaunch_PinsTheModelItStartsWith`. Done ahead of 3.5 on purpose — the pin must ship in the build *before* any default change, or it pins the new default.
   - [ ] 3.8 If the default changed: update `Strings.ModelLabelSmall` / `ModelLabelTurbo` so the labels no longer imply small is the fast choice
-  - [ ] 3.9 Run `dotnet test windows/Spit.sln` and confirm the baseline from 1.8 (215 since 6.9) still passes, minus any `rightAlt` cases deliberately removed in 3.1
+  - [ ] 3.9 Run `dotnet test windows/Spit.sln` and confirm the baseline from 1.8 (218 since 1.13) still passes, minus any `rightAlt` cases deliberately removed in 3.1
 
 - [ ] 4.0 **(PC)** Session 2 — the 15-item manual checklist, with screenshots and triage
   - [ ] 4.1 Item 1 + rule 21: download through Edge and capture screenshots of the Edge warning, SmartScreen, and Smart App Control if it fires. Confirm the install needs no admin prompt
   - [ ] 4.2 Item 2: hold the hotkey and dictate into Notepad, Chrome and an Office app
+    - Watch in Word: two dictations in a row. Right Ctrl reaches Word (the hook never swallows), and Ctrl pressed and released alone after a paste opens Office's "Paste Options" menu, which Spit's Ctrl+V could then land on. Unconfirmed — only Word can say
   - [ ] 4.3 Item 3: copy an image, dictate, press Ctrl+V — the image pastes (rule 10)
+    - Use **both** a small web image and a full-screen screenshot (Print Screen) — the screenshot is the case 1.13 fixed. Wait 2 s after the text appears before Ctrl+V: within 1.5 s the dictation is still on the clipboard by design (rule 32).
+    - Two known costs, not failures: reading a delay-rendered format (an Office or Photos copy) makes its app render it before the paste, so a big copy adds latency; and a restore that finds the clipboard busy for 200 ms is not retried until the next paste.
   - [ ] 4.4 Item 4: Win+V history does not contain the dictated text (rule 9, unconditional)
   - [ ] 4.5 Item 5: with Notepad running as administrator, the hotkey does nothing there, and the bar's mic-button session goes clipboard-only **with the admin message shown** — the silent failure is the unacceptable one (rule 13)
+    - Also run it once **with the network off**: before 1.13 that combination replaced the admin message with "Pasted raw".
   - [ ] 4.6 Item 6: double-tap latches; Esc cancels; a 90 s latched session ends with "Reached the 90 s limit"
+    - **Talk for most of the 90 s.** The speech gate reads the loudest 5 % of the recording; one sentence followed by 80 s of silence is rejected as "Nothing heard" — by design, on both clients. After the limit the bar returns to idle while the long transcription runs; with Whisper small on a CPU that can be tens of seconds before the paste.
   - [ ] 4.7 Item 7: plug a headset in mid-dictation — the whole dictation is still transcribed
+    - Confirm the switch actually happened: `audio input rebuilt after default device changed` in `%LOCALAPPDATA%\Miraside\Spit\logs`. If Windows does not make the headset the default input, the item passes without testing anything.
+    - Risk: the switch is tried once. A Bluetooth mic that takes over 3 s to start leaves the bar on "Listening" with a flat waveform, and everything after the switch is lost. A word said at the moment of plugging in can also be clipped (the old device closes before the new one opens).
   - [ ] 4.8 Item 8: with microphone privacy off, the message and the settings button both appear
+    - **Wait 20 s after the previous dictation, or relaunch Spit, before testing.** Capture stays warm for 20 s after a dictation and a warm device is not reopened, so the privacy check never runs.
+    - The message and its button return to idle after 1.2 s, like every message on both clients — too short to click while holding the key. If that reads as a failure, it is a follow-up (a longer hold for messages that carry an action), not a quick fix: it changes the Mac too.
   - [ ] 4.9 Item 9: network off gives "Pasted raw"; network back on plus one more dictation, and the offline one appears in `GET /v1/dictations`
+    - **Use Clean mode and more than 12 words for both dictations.** A short sentence ending in punctuation skips cleanup (SkipGate), and literal mode never calls it, so neither says "Pasted raw" offline. And the outbox is replayed only after a successful `/v1/refine`: a short "one more dictation" back online would not send the offline one. The replay-only-after-refine behaviour is shared with the Mac; if it matters, it is a follow-up for both.
   - [ ] 4.10 Item 10: launch Spit twice — one instance, and its window comes forward
   - [ ] 4.11 Item 11: close the window and confirm the hotkey still works; reboot and confirm launch-at-login survived
+    - Before rebooting, `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v Spit` must point at `%LOCALAPPDATA%\Spit\Spit.exe`. A value left by a dev build still shows the toggle as on and would launch the dev exe.
   - [ ] 4.12 Item 12: change Mode on the PC, then confirm `GET /v1/settings` still shows the Mac's hotkey (rule 46 — Windows never writes the hotkey)
+    - Make it mean something: set the Mac to a non-default key (Right Option) first. 1.13 fixed the case where a recent Mac change was reverted.
   - [ ] 4.13 Item 13: Insights shows the same totals as the Mac for the same user, and "Google Chrome" is a single bar
   - [ ] 4.13a Item 14: sleep and wake the PC, then lock and unlock — the hotkey still works (rule 29, `HookWatchdog`)
   - [ ] 4.13b Item 15: uninstall from Settings › Apps removes the program and leaves `%LOCALAPPDATA%\Miraside\Spit\`

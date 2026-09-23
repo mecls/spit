@@ -2,7 +2,8 @@
 # windows/scripts/spike-s5.ps1 taking the same before/after snapshots the PC session takes (prd-windows-parity.md
 # §3.1 step 5). It does not replace the PC run — a runner is Windows Server, runs elevated, and nobody downloads
 # anything through Edge — but it runs the script on Windows before the PC session depends on it, and it catches an
-# upgrade regression whenever packing or storage changes.
+# upgrade regression whenever packing or storage changes. Then it uninstalls with Spit still running — checklist item
+# 15, which nothing else covers that way: CI's own uninstall step stops Spit first.
 name: spike-s5
 
 on:
@@ -11,6 +12,7 @@ on:
       - windows/scripts/pack.ps1
       - windows/scripts/spike-s5.ps1
       - windows/Spit.App/Storage/**
+      - windows/Spit.App/Program.cs
       - windows/Spit.App/Spit.App.csproj
       - .github/workflows/spike-s5.yml
   workflow_dispatch:
@@ -78,6 +80,35 @@ jobs:
           "setup 0.2.1-test exit $($p.ExitCode)"
           for ($i = 0; $i -lt 60 -and -not ((Test-Path $exe) -and (Get-Item $exe).VersionInfo.ProductVersion -like '0.2.1*'); $i++) { Start-Sleep 1 }
           windows/scripts/spike-s5.ps1 -Snapshot after
+
+      - name: Uninstall while Spit runs (checklist item 15)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $install = Join-Path $env:LOCALAPPDATA 'Spit'
+          $data = Join-Path $env:LOCALAPPDATA 'Miraside\Spit'
+          $exe = Join-Path $install 'current\Spit.exe'
+          if (-not (Get-Process Spit -ErrorAction SilentlyContinue)) { Start-Process -FilePath $exe | Out-Null; Start-Sleep 10 }
+          "Spit processes before uninstalling: $(@(Get-Process Spit -ErrorAction SilentlyContinue).Count)"
+          $u = Start-Process -FilePath (Join-Path $install 'Update.exe') -ArgumentList @('--uninstall', '--silent') -PassThru -Wait
+          "uninstall exit $($u.ExitCode)"
+          for ($i = 0; $i -lt 60 -and (Test-Path $exe); $i++) { Start-Sleep 1 }
+
+          $entries = @(Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+            Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -like '*Spit*' })
+          $run = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Spit -ErrorAction SilentlyContinue
+          $checks = @(
+            @{ Name = 'the program is gone'; Ok = -not (Test-Path $exe); Seen = "current\Spit.exe exists: $(Test-Path $exe)" },
+            @{ Name = 'no entry left in Installed Apps'; Ok = $entries.Count -eq 0; Seen = "$($entries.Count) entries" },
+            @{ Name = 'no Spit process left'; Ok = @(Get-Process Spit -ErrorAction SilentlyContinue).Count -eq 0; Seen = "$(@(Get-Process Spit -ErrorAction SilentlyContinue).Count) running" },
+            @{ Name = 'the data folder survived'; Ok = (Test-Path (Join-Path $data 'settings.json')); Seen = "settings.json exists: $(Test-Path (Join-Path $data 'settings.json'))" },
+            @{ Name = 'the startup entry was removed'; Ok = -not $run; Seen = $(if ($run) { "still there: $($run.Spit)" } else { 'gone' }) }
+          )
+          $table = @('', '| after uninstalling with Spit running | result | what was seen |', '|---|---|---|')
+          foreach ($c in $checks) { $table += "| $($c.Name) | $(if ($c.Ok) { 'pass' } else { '**FAIL**' }) | $($c.Seen) |" }
+          $table -join "`n"
+          $table | Add-Content -Path windows/spike-s5/table.md
+          if (@($checks | Where-Object { -not $_.Ok }).Count -gt 0) { throw 'uninstall left something behind or took something it should not' }
 
       - name: Summary
         if: always()
