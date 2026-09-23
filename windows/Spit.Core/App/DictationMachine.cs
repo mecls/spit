@@ -67,6 +67,10 @@ public sealed class DictationMachine
     public DictationMachine(TimeProvider? time = null) => this.time = time ?? TimeProvider.System;
 
     public DictationPhase Phase { get; private set; } = new DictationPhase.ModelLoading(0);
+
+    /// Whether a double-tap may latch: false while the model is still loading, when `HotkeyDown` refuses to
+    /// start a dictation, so a latch would sit over a session that never began. The Mac's `canLatch`.
+    public bool CanLatch => Phase is DictationPhase.Ready;
     public IReadOnlyList<Dictation> Queue => queue;
 
     public IReadOnlyList<Effect> Handle(MachineEvent e)

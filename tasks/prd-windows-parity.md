@@ -156,7 +156,7 @@ demonstrably good; shipping it is a separate decision.
     Windows tests, keeping the Mac's naming.
 
 18. **The Mac refuses to latch while the model is still loading.** Verified gap: Windows guards this at
-    `windows/Spit.App/App/Coordinator.cs:952` (`loading.IsReady`, `machine.Phase is DictationPhase.Ready`);
+    `Coordinator.Apply` (`windows/Spit.App/App/Coordinator.cs:372`, no latch without a running capture);
     the Mac's `Coordinator` has no equivalent check. A double-tap during the first launch's model load
     currently starts a latched session against a transcriber that cannot transcribe.
 

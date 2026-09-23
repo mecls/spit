@@ -15,8 +15,8 @@ final class DictationMachineTests: XCTestCase {
     /// The gesture itself is valid — `TapLatch` says `.latch`, as asserted below — so nothing in the
     /// key path stops it. What stops it is `canLatch`: `.hotkeyDown` refuses to start a dictation while
     /// the model is loading, and latching over a dictation that never began leaves the bar claiming a
-    /// live microphone and makes the next press end a session that does not exist. Windows has guarded
-    /// this since `Coordinator.cs:952`; the Mac's key path had not.
+    /// live microphone and makes the next press end a session that does not exist. Windows guarded this
+    /// in `Coordinator.Apply` (no latch without a capture); the Mac's key path had not.
     func testADoubleTapWhileTheModelIsLoadingCannotLatch() {
         var m = DictationMachine()
         XCTAssertFalse(m.canLatch)

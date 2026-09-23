@@ -371,7 +371,7 @@ public sealed class Coordinator : IDisposable
 
             case TapLatch.Outcome.Latch:
                 CancelLatchWindow();
-                if (!capture.IsCapturing)
+                if (!machine.CanLatch || !capture.IsCapturing)
                 {
                     tapLatch.Reset();
                     break;

@@ -21,6 +21,28 @@ public sealed class DictationMachineTests
         Assert.Empty(m.Queue);
     }
 
+    /// A double-tap during the first launch's model load must not start a latched session. The gesture itself
+    /// is valid — `TapLatch` says `Latch` — so what stops it is `CanLatch`.
+    [Fact]
+    public void testADoubleTapWhileTheModelIsLoadingCannotLatch()
+    {
+        var m = new DictationMachine();
+        Assert.False(m.CanLatch);
+        Assert.Equal(Fx(Hud(new HUDState.ModelLoading(0))), m.Handle(new MachineEvent.HotkeyDown(null)));
+        Assert.Empty(m.Queue);
+
+        // The gesture does reach `Latch`, so the refusal above is the machine's and not an accident of the tap timing.
+        var t0 = DateTimeOffset.FromUnixTimeSeconds(1_000_000);
+        var latch = new TapLatch();
+        Assert.Equal([TapLatch.Outcome.StartDictation], latch.Handle(HotkeyAction.Press, t0));
+        Assert.Equal([TapLatch.Outcome.HoldOpen], latch.Handle(HotkeyAction.Release, t0.AddMilliseconds(100)));
+        Assert.Equal([TapLatch.Outcome.Latch], latch.Handle(HotkeyAction.Press, t0.AddMilliseconds(200)));
+
+        _ = m.Handle(new MachineEvent.ModelReady());
+        Assert.True(m.CanLatch);
+        Assert.Equal(Fx(new Effect.StartRecording(), Hud(new HUDState.Listening())), m.Handle(new MachineEvent.HotkeyDown(null)));
+    }
+
     [Fact]
     public void testHappyPath()
     {

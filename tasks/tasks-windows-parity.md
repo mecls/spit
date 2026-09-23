@@ -75,7 +75,7 @@ only trust the boxes if they were ticked as the work happened.
 - [x] 0.0 Create a feature branch for this work
   - [x] 0.1 Branch `feat/windows-parity` off `main` — **not** off the current `docs/parakeet-english-engine`, which is an open, unrelated docs PR
 
-- [ ] 1.0 Prepare the spike session on the Mac, so PC time is spent measuring rather than authoring
+- [x] 1.0 Prepare the spike session on the Mac, so PC time is spent measuring rather than authoring
   - [x] 1.1 Add a `--model <file>` argument to `SmokeTest.Parse` / `Run` in `windows/Spit.App/App/SmokeTest.cs`. **Blocking for S1:** `:96` currently hardcodes `var file = ModelCatalog.DefaultFile`, so the harness can only ever measure one of the three models. Default to `ModelCatalog.DefaultFile` when the flag is absent, so `windows-ci.yml` keeps working unchanged
   - [x] 1.2 Extend the smoke `Report` record with the wall-clock of the whole run and the resolved model path, if `TranscribeMs` and `AsrModel` do not already cover what rule 4's median needs
     - Added `modelFile` and `wavFile`, so a folder of 36 reports collates without trusting the driver's file names. **Deliberately no whole-run wall clock:** rule 4's median is the one-pass time and `transcribeMs` is exactly that; a second duration that also counted the model load would be the easy column to median by mistake.
@@ -124,7 +124,7 @@ only trust the boxes if they were ticked as the work happened.
   - [ ] 3.6 Rewrite `ModelCatalog.cs:7-10`'s header comment either way, citing the measured GPU number instead of the current "friends' PCs mostly have no GPU Vulkan can use" assumption (rule 6)
   - [ ] 3.7 Verify rule 7 holds in code: an existing install keeps the model it already downloaded and does not re-fetch 574 MB. Check `SettingsStore`'s `ModelFile` read path — `DefaultFile` must only apply when no setting exists
   - [ ] 3.8 If the default changed: update `Strings.ModelLabelSmall` / `ModelLabelTurbo` so the labels no longer imply small is the fast choice
-  - [ ] 3.9 Run `dotnet test windows/Spit.sln` and confirm the baseline from 1.8 still passes, minus any `rightAlt` cases deliberately removed in 3.1
+  - [ ] 3.9 Run `dotnet test windows/Spit.sln` and confirm the baseline from 1.8 (215 since 6.9) still passes, minus any `rightAlt` cases deliberately removed in 3.1
 
 - [ ] 4.0 **(PC)** Session 2 — the 13-item manual checklist, with screenshots and triage
   - [ ] 4.1 Item 1 + rule 21: download through Edge and capture screenshots of the Edge warning, SmartScreen, and Smart App Control if it fires. Confirm the install needs no admin prompt
@@ -158,7 +158,7 @@ only trust the boxes if they were ticked as the work happened.
     - **Latency trade-off worth Miguel's eye:** the Mac now sometimes pays a whole-recording pass where it used to paste immediately with duplicated words. It only fires when the overlap held speech *and* no seam was found even with two fragment words skipped — the duplication case — but it is a real change to a shipping path with no macOS CI behind it.
   - [x] 6.3 Port the Windows `StitchTests.cs` cases into `mac/VoiceTests/StitchTests.swift`, renamed to the Mac's convention (rule 20)
     - `StitchTests.cs` turned out to be a straight port *of the Mac's* file — nothing new in it. The cases worth back-porting were in `StreamTailCombineTests.cs`, and three came over: `testTryJoinReportsWhetherItFoundTheSeam`, `testOnlyTheSkippingVariantStepsOverACutOffWord` (Windows' `TheMacJoinNeverSkipsTailWords`, which still holds — `join` and `tryJoin` keep the original rule), and `testACutOffWordAtTheTailsStartStillFindsTheSeam`.
-  - [x] 6.4 Add the rule 18 guard: the Mac must refuse to latch while the model is still loading. Windows does this at `windows/Spit.App/App/Coordinator.cs:952` (`loading.IsReady` plus `machine.Phase is DictationPhase.Ready`); the Mac's `Coordinator` has no equivalent
+  - [x] 6.4 Add the rule 18 guard: the Mac must refuse to latch while the model is still loading. Windows does this in `Coordinator.Apply` (`windows/Spit.App/App/Coordinator.cs:372`: no latch without a running capture; an earlier draft cited `:952`, which is the model-progress handler); the Mac's `Coordinator` has no equivalent
     - The gap was narrower than the rule implies and worth writing down: the Mac's **mic-button** path already guarded it (`Coordinator.swift:419`, "Only latch if a recording actually started"). Only the **key** path did not. A double-tap during model load therefore set `isLatched` over a dictation `.hotkeyDown` had refused to start, and the next press ended a session that did not exist.
     - The rule lives on the reducer as `DictationMachine.canLatch`, so it is testable; `Coordinator.apply(.latch)` guards on it and resets `TapLatch` so the two cannot disagree.
   - [x] 6.5 Add a test for 6.4 in `mac/VoiceTests/TapLatchTests.swift` or `DictationMachineTests.swift`: a double-tap during model load does not start a latched session
@@ -170,6 +170,10 @@ only trust the boxes if they were ticked as the work happened.
     - Fixed the same way Windows does it: a `transcribeRequested` flag set false before `send(.audioStopped(…))` and true by the `.transcribe` effect. `send` dispatches effects synchronously, so reading the flag straight afterwards answers "did `.transcribe` fire?". Checking `streaming.isRunning` alone would have been wrong — `.transcribe` finishes the stream inside a `Task`, so it is still running at that moment, and finishing it there would have broken live transcription outright.
   - [x] 6.8 Run the Mac suite from `mac/`: `xcodebuild -project Voice.xcodeproj -scheme Voice -derivedDataPath build/test-dd -quiet test`
     - **154 tests, 1 skipped, 0 failures, `** TEST SUCCEEDED **`** (2026-09-22). 150 before, plus the 4 added here, all 4 confirmed passing by name in the log.
+  - [x] 6.9 Port the four new Mac tests back to Windows by name, so `windows/scripts/parity-check.sh` passes. PR #4's first CI run failed on exactly this: the parity contract (build spec rule 22) requires every test in the shared Mac classes to exist in C# under the same name, and 6.3/6.5 added four Mac-only ones
+    - `StitchTests.cs` gained the three stitch cases. Two of them already existed in `StreamTailCombineTests.cs` under other names (`TryJoinReportsWhetherItFoundTheSeam`, `TheMacJoinNeverSkipsTailWords`) and were **moved**, not copied; the third tests `Stitch` directly where the Windows original goes through `StreamTail.Combine`, so both stay.
+    - `DictationMachine.CanLatch` now exists on Windows too, and `Coordinator.Apply(Latch)` checks it beside `capture.IsCapturing`, so the rule lives in the reducer on both clients.
+    - **Windows baseline is now 215** (213 + 4 − 2 moved), 0 failed. Parity: Swift 112, C# 112. Mac: 154 tests, 1 skipped, 0 failures (2026-09-23).
 
 - [ ] 7.0 Close out: real-use latency, the docs that still claim Windows is unverified, and the follow-ups
   - [ ] 7.1 **(PC)** Do 20 real dictations on the PC in ordinary use, not as a test

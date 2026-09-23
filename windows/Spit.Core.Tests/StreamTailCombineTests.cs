@@ -1,6 +1,7 @@
 namespace Spit.Core.Tests;
 
-/// `StreamTail.Combine` and `Stitch.TryJoin`: Windows-only rules, so they live outside the ported classes.
+/// `StreamTail.Combine`: a Windows-only rule, so it lives outside the ported classes. `Stitch.TryJoin`'s own cases
+/// moved to `StitchTests` when the Mac gained it.
 public sealed class StreamTailCombineTests
 {
     [Fact]
@@ -49,17 +50,6 @@ public sealed class StreamTailCombineTests
     }
 
     [Fact]
-    public void TryJoinReportsWhetherItFoundTheSeam()
-    {
-        Assert.True(Stitch.TryJoin("the build on friday after the review", "friday after the review and more", out var stitched));
-        Assert.Equal("the build on friday after the review and more", stitched);
-
-        Assert.False(Stitch.TryJoin("Hi Joel, quick", "Joel, quick update.", out var appended));
-        Assert.Equal("Hi Joel, quick Joel, quick update.", appended);
-        Assert.Equal(appended, Stitch.Join("Hi Joel, quick", "Joel, quick update."));
-    }
-
-    [Fact]
     public void ACutOffWordAtTheTailsStartStillFindsTheSeam()
     {
         // The overlap cut "dashboard" to "board"; the fifth review showed this sent ordinary speech to a whole pass.
@@ -88,14 +78,6 @@ public sealed class StreamTailCombineTests
 
         Assert.False(StreamTail.OverlapHasSpeech(samples, coveredMs: 3000, totalMs: 3000));
         Assert.True(StreamTail.OverlapHasSpeech(samples, coveredMs: 2000, totalMs: 3000));
-    }
-
-    [Fact]
-    public void TheMacJoinNeverSkipsTailWords()
-    {
-        // Parity: Stitch.TryJoin stays the Mac's rule; only the Windows join skips fragment words.
-        Assert.False(Stitch.TryJoin("the dashboard is running on Convex now", "board is running on Convex now, and more", out _));
-        Assert.True(Stitch.TryJoinAllowingTailSkip("the dashboard is running on Convex now", "board is running on Convex now, and more", out _));
     }
 
     private static float[] Tone(double seconds)
