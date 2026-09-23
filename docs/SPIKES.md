@@ -155,3 +155,208 @@ without AVX; with no GPU, whisper.cpp logs "no GPU found" and runs the Vulkan bu
   found no seam between stream and tail, so it re-transcribed the whole clip (task 9.1).
 - **Still to measure on a real PC (S1):** a machine with a GPU Vulkan can use, `pt-synthetic.wav`, and 20 real
   dictations through the latency SQL.
+
+---
+
+# The five PC spikes (S1–S5) — not yet run
+
+Specified in `tasks/prd-spit-mac-windows.md` §5 before the Windows UI existed, never run, because until now there
+was no physical PC. Five design decisions are therefore sitting on their documented fallbacks rather than on
+evidence. `tasks/prd-windows-parity.md` governs how they are run; the rule numbers below are its §2.
+
+Three things that apply to all five:
+
+- **Run them in this order: S4 → S3 → S2 → S1 → S5** (rule 3). S4 can remove a hotkey and S1 can change the
+  default model, and the §5 checklist assumes both are settled.
+- **The failure branch is already decided** (rule 2). A spike that fails and then gets argued with is not a
+  spike.
+- **Fill these sections with raw output** — the actual `vkCode`s, the actual milliseconds, the actual log
+  lines — not a sentence saying it passed (rule 1). A bare "it worked" cannot be re-checked in six months
+  when the rule it justifies looks arbitrary and someone deletes it.
+
+Each heading gets the date and the machine when it is run, matching the sections above.
+
+## S4 — Right Ctrl / Right Alt / AltGr on a pt-PT keyboard (pending)
+
+Harness: `Spit.exe --key-log` (`windows/Spit.App/Program.cs:8`). Subjects: `KeyboardHook.cs`, `MenuMask.cs`.
+
+**Passes if** all four gestures produce the `vkCode`/`scanCode`/flags the hotkey code assumes, **and** `vkE8`
+masking suppresses the menu bar in *both* Notepad and File Explorer (rule 12 — they use different menu
+implementations), **and** nothing is swallowed: Right Ctrl+C still copies and AltGr+2 still types `@` (rule 11).
+
+**On failure: drop `rightAlt`, Right Ctrl only.** Apply it immediately, before any other spike runs against a
+hotkey that is going away (task 2.5).
+
+| gesture | vkCode | scanCode | flags | repeats | menu opened? | passed through? |
+|---|---|---|---|---|---|---|
+| hold Right Ctrl | | | | | n/a | |
+| hold Right Alt | | | | | Notepad: / Explorer: | |
+| AltGr+2 (pt-PT) | | | | | | typed `@`? |
+| Right Ctrl+C | | | | | n/a | copied? |
+
+## S3 — reading an elevated foreground window (pending)
+
+Harness: `Spit.exe --elevation-log` (`windows/Spit.App/Platform/ElevationLog.cs`). It prints, for each process
+that comes to the front, its integrity level, `IsElevated`, `BlocksInputFromSpit` and the paste route that answer
+picks — paste that output here. Subject: `windows/Spit.App/Platform/ElevationProbe.cs`. Spit runs non-elevated
+throughout; the harness's first line says whether it is.
+
+**Passes if** the probe answers correctly for both cases below. **On failure:** keep rule 30's
+"access-denied counts as elevated", which is the safe direction — it degrades to clipboard-only rather than
+pasting into a window it cannot reach.
+
+| foreground window | ElevationProbe says | correct? | what the user saw |
+|---|---|---|---|
+| Notepad as administrator | | | |
+| Notepad as normal user | | | |
+
+## S2 — which process renders the clipboard first under Clipboard History (pending)
+
+Harness: `Spit.exe --clip-log` (`windows/Spit.App/Platform/ClipLog.cs`). Each round promises a marker line by
+delayed rendering beside `ExcludeClipboardContentFromMonitorProcessing`, then prints every `WM_RENDERFORMAT`: the
+process that asked (the window holding the clipboard open), the milliseconds since the marker went up, and what was
+in front. Its first line says whether Clipboard History is on. One round per paste target; the marker is made-up
+text, so look for it in Win+V. Subjects: `windows/Spit.App/Inject/ClipboardSession.cs`, `ClipboardSnapshot.cs`.
+
+**Passes if** the target app triggers the first `WM_RENDERFORMAT` in all three hosts, which is what would let
+the 1.5 s restore shrink. **On failure:** keep rule 32's 1.5 s.
+
+**Rule 9 is unconditional and outranks the spike:** press Win+V after each paste. If the dictation is in
+history, stop the session and fix it — it does not become a documented limitation (task 2.9).
+
+| paste target | first WM_RENDERFORMAT from | ms until it arrived | in Win+V history? |
+|---|---|---|---|
+| Notepad | | | must be **no** |
+| Chrome | | | must be **no** |
+| Word | | | must be **no** |
+
+## S1 — one-pass latency: 2 runtimes × 3 models × 2 fixtures (pending)
+
+Driver: `pwsh windows/scripts/spike-s1.ps1`. It runs the matrix, discards the first repetition of each cell
+(rule 4), prints the table below filled in, and prints rule 6's verdict sentence ready to paste.
+
+**Rule 5: a Vulkan row is only valid if `BackendLog` named the device.** Whisper.net's runtime order falls
+through `Vulkan → Cpu → CpuNoAvx` in silence, so a Vulkan run that quietly loaded the CPU library looks like a
+slow GPU rather than a missing one. The driver marks such rows **VOID**; void is not slow, and a void row is
+re-run, not recorded.
+
+**Rule 6:** the Windows default becomes `ggml-large-v3-turbo-q5_0.bin` **iff** its median Vulkan time on
+`en.wav` is ≤ 0.25 × audio duration = **≤ 3,150 ms**. That bound is not invented here: it is the Mac's own
+shipped assertion (`mac/VoiceTests/WhisperKitTranscriberTests.swift:35` fails at 3.0 s), and it is measured
+the same way — a cold first transcription in a fresh process, which is what every smoke run is.
+
+Machine: (CPU, RAM, GPU — fill in)
+
+| fixture | model | runtime asked | runtime loaded | audio ms | kept timings | median ms | median / audio | Vulkan device |
+|---|---|---|---|---|---|---|---|---|
+| | | | | | | | | |
+
+Verdict sentence (paste the driver's output verbatim):
+
+## S5 — installing 0.2.1 over 0.2.0 (pending)
+
+Build both first — the Mac cannot do it, because Velopack's `vpk` only packs for its host OS:
+
+```
+pwsh windows/scripts/pack.ps1 -PackVersion 0.2.0-test -OutputDir windows/Releases/s5-0.2.0
+pwsh windows/scripts/pack.ps1 -PackVersion 0.2.1-test -OutputDir windows/Releases/s5-0.2.1
+```
+
+Then `pwsh windows/scripts/spike-s5.ps1 -Snapshot before` once 0.2.0-test is installed with a token, Launch at
+login on and one dictation done (it warns if any is missing — survival of something never there proves nothing),
+and `-Snapshot after` once 0.2.1-test is installed over it. The second run prints the table below filled in.
+
+**Passes if,** after installing 0.2.0-test and then 0.2.1-test: exactly one entry in Installed Apps, and the
+data directory, the stored token and the Run entry all survive. **On failure:** the `/spit` page tells users to
+uninstall first.
+
+| after installing 0.2.1-test over 0.2.0-test | result |
+|---|---|
+| entries in Installed Apps | must be exactly 1 |
+| `%LOCALAPPDATA%\Miraside\Spit` intact | |
+| stored token survives | |
+| Run registry entry survives | |
+| version the app reports | expect `0.2.1-test` |
+
+### On a GitHub runner (2026-09-23, `windows-latest`, run 35922307917) — not the PC
+
+`.github/workflows/spike-s5.yml`: both builds packed by `pack.ps1`, 0.2.0-test installed with `--silent`, the token
+and Run value seeded in the app's own formats (Launch at login is off by default, so nothing else writes them),
+Spit left running, 0.2.1-test installed over it with `--silent`. `spike-s5.ps1`'s output, verbatim:
+
+```
+setup 0.2.0-test exit 0
+  Installed Apps entries: 1  app version: 0.2.0-test  data files: 2  token targets: 1  Run entry: "C:\Users\runneradmin\AppData\Local\Spit\Spit.exe"
+Spit processes before the upgrade: 1
+setup 0.2.1-test exit 0
+  Installed Apps entries: 1  app version: 0.2.1-test  data files: 3  token targets: 1  Run entry: "C:\Users\runneradmin\AppData\Local\Spit\Spit.exe"
+```
+
+| check | result | what was seen |
+|---|---|---|
+| exactly one entry in Installed Apps | pass | 1 (Spit 0.2.1) |
+| the app is the newer build | pass | before 0.2.0-test, after 0.2.1-test |
+| the data directory survived | pass | 2 files before, 3 after |
+| the stored token survived | pass | 1 target(s) before, 1 after |
+| the Run entry survived and still points at a file | pass | before and after `"C:\Users\runneradmin\AppData\Local\Spit\Spit.exe"` (target exists: True) |
+
+Worth knowing: Installed Apps shows `DisplayVersion` **0.2.1**, without `-test` — Velopack drops the pre-release
+label there; the app itself reports 0.2.1-test. The two files before the upgrade are the day's log and
+`settings.json`, the latter written by the first launch alone (task 3.7's pin, seen working in a real install).
+
+Uninstalling with Spit still running (checklist item 15; run 35924451389, after task 1.13 added the uninstall hook):
+
+```
+Spit processes before uninstalling: 1
+uninstall exit 0
+```
+
+| after uninstalling with Spit running | result | what was seen |
+|---|---|---|
+| the program is gone | pass | current\Spit.exe exists: False |
+| no entry left in Installed Apps | pass | 0 entries |
+| no Spit process left | pass | 0 running |
+| the data folder survived | pass | settings.json exists: True |
+| the startup entry was removed | pass | gone |
+
+What this does not cover, and the PC run (task 2.14) still must: a desktop Windows 11 rather than Windows Server, a
+non-elevated user, the installer downloaded through Edge and run by double-click rather than `--silent`, and a token
+and Run entry written by Spit's own Settings page rather than seeded.
+
+## Live transcription on real clips — session 3 (pending)
+
+Record, then replay (prd-windows-parity.md §3.3; rules 14-16):
+
+```
+windows/publish/Spit.exe --record-clips C:\spit-clips
+pwsh windows/scripts/spike-live.ps1 -Clips C:\spit-clips
+```
+
+`--record-clips` writes numbered WAVs through the same `AudioCapture` a dictation uses (Enter starts, Enter stops),
+so the replay is the recording sample for sample. `spike-live.ps1` runs each through the smoke test's live path with
+`--warm-pass` and prints the table below, rule 15's verdict, and `live-texts.md`: for every clip that missed, the
+stream's own text, the tail pass's text, the stitched result and the one-pass. The texts stay in that report folder,
+never in the app log, which holds no dictated text (rules 25-26).
+
+**Why a warm one-pass:** the smoke test's `transcribeMs` is a cold first transcription (right for S1), and the stream
+runs after it, warm. Rule 15's "≤ 1.3 × the one-pass time" against the cold number would flatter streaming by the
+~2× first-inference cost, so the comparison is against `warmTranscribeMs`, a second one-pass after the stream.
+
+**Holds if**, over at least 10 clips of 10-30 s: live text character-identical to one-pass on ≥ 8 of 10, and live
+time ≤ 1.3 × warm one-pass on all of them. **Otherwise** `LiveTranscription` stays `false` and the logs go to a
+numbered follow-up (rule 14). Run it once before tuning (task 5.1-5.2) and once after (task 5.6), into separate
+`-OutputDir`s.
+
+Before tuning:
+
+| clip | audio s | one-pass ms (warm) | live ms | live / one-pass | identical | same words | whole-pass fallback | segments | counted |
+|---|---|---|---|---|---|---|---|---|---|
+| | | | | | | | | | |
+
+Why each miss missed (task 5.3, from `live-texts.md`, written before any constant changes):
+
+After tuning:
+
+| clip | audio s | one-pass ms (warm) | live ms | live / one-pass | identical | same words | whole-pass fallback | segments | counted |
+|---|---|---|---|---|---|---|---|---|---|
+| | | | | | | | | | |

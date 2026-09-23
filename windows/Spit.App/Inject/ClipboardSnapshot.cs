@@ -3,13 +3,19 @@ using System.Runtime.InteropServices;
 namespace Spit.App;
 
 /// A restorable copy of the clipboard, the Windows form of `PasteboardSnapshot`. Memory formats on an
-/// allow list only, each ≤ 5 MB (rule 33): GDI-handle formats such as `CF_BITMAP` and `CF_ENHMETAFILE`
-/// can't be copied as bytes, and a format that fails to read is left out rather than blocking the
-/// paste. Windows re-synthesises what it derives (`CF_BITMAP` from a DIB, `CF_TEXT` from Unicode text).
+/// allow list only, each ≤ 5 MB and bitmaps ≤ 128 MB (rule 33): GDI-handle formats such as `CF_BITMAP`
+/// and `CF_ENHMETAFILE` can't be copied as bytes, and a format that fails to read is left out rather than
+/// blocking the paste. Windows re-synthesises what it derives (`CF_BITMAP` from a DIB, `CF_TEXT` from Unicode text).
 public sealed class ClipboardSnapshot
 {
-    /// Mac `PasteboardSnapshot.maxBytes`.
+    /// Mac `PasteboardSnapshot.maxBytes`, for every format but bitmaps.
     public const int MaxBytes = 5_000_000;
+
+    /// Bitmaps are the exception. A Mac screenshot is compressed PNG and fits in 5 MB; a Windows one is an
+    /// uncompressed DIB — 8.3 MB at 1920×1080, 33 MB at 4K — and leaving it out made the restore empty the
+    /// clipboard and destroy the user's image (prd-windows-parity.md rule 10: the clipboard always comes back).
+    /// 128 MB covers Print Screen across three 4K displays; the copy lives only until the restore, 1.5 s later.
+    public const int MaxBitmapBytes = 128_000_000;
 
     public static readonly IReadOnlyList<uint> AllowedStandardFormats =
         [Native.CF_UNICODETEXT, Native.CF_DIBV5, Native.CF_DIB, Native.CF_HDROP];
@@ -52,7 +58,7 @@ public sealed class ClipboardSnapshot
         while ((current = Native.EnumClipboardFormats(current)) != 0)
         {
             if (!allowed.Contains(current)) continue;
-            var data = ClipboardSession.ReadData(current, MaxBytes);
+            var data = ClipboardSession.ReadData(current, MaxBytesFor(current));
             if (data is not null) items.Add(new KeyValuePair<uint, byte[]>(current, data));
         }
         var error = Marshal.GetLastPInvokeError();
@@ -60,6 +66,8 @@ public sealed class ClipboardSnapshot
 
         return new ClipboardSnapshot(items);
     }
+
+    internal static int MaxBytesFor(uint format) => format is Native.CF_DIB or Native.CF_DIBV5 ? MaxBitmapBytes : MaxBytes;
 
     /// Puts the copy back on the clipboard the caller already has open. An empty snapshot empties the
     /// clipboard, as `PasteboardSnapshot.restore` clears it. Restored content is excluded from history

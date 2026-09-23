@@ -33,6 +33,15 @@ struct DictationMachine {
     static let minimumMs = 400
 
     private(set) var phase: Phase = .modelLoading(0)
+
+    /// Whether a double-tap may latch.
+    ///
+    /// False while the model is still loading. `.hotkeyDown` already refuses to start a dictation then,
+    /// so latching would leave the bar's indicator claiming a live microphone over a session that never
+    /// began, and the next press would end a dictation that does not exist. The bar's mic button checked
+    /// this from the start; the key path did not. Windows has the same rule as `DictationMachine.CanLatch`,
+    /// checked in `Coordinator.Apply(TapLatch.Outcome.Latch)`.
+    var canLatch: Bool { phase == .ready }
     private(set) var queue: [Dictation] = []
     private var recording: UUID?      // dictation currently capturing audio
     private var cancelledRecording = false
@@ -84,18 +93,20 @@ struct DictationMachine {
 
         case .refined(let id, let result):
             guard let i = index(of: id) else { return [] }
-            var effects: [Effect] = []
             switch result {
             case .cleaned(let t): queue[i].cleaned = t
             case .literal: queue[i].cleaned = nil
             case .skipped:
                 queue[i].cleaned = nil
                 queue[i].llmModel = CleanupEngine.skipped
-            case .rawFallback(let r): queue[i].fallback = r; queue[i].cleaned = nil
-                effects.append(.hud(.message(r == .unauthorized ? Strings.tokenInvalid : Strings.pastedRaw)))
+            case .rawFallback(let r):
+                // Said once the paste is done (`.inserted`), not now: `.done` followed and replaced it
+                // before anyone could read it, and a clipboard-only paste's own message came before it
+                // and was replaced by it.
+                queue[i].fallback = r; queue[i].cleaned = nil
             }
             queue[i].stage = .readyToInsert
-            return insertHeadIfReady() + effects
+            return insertHeadIfReady()
 
         case .inserted(let id, let how):
             guard let i = index(of: id) else { return [] }
@@ -105,11 +116,19 @@ struct DictationMachine {
             // in the coordinator, which keeps this reducer pure and its effects comparable in tests.
             let via = queue[i].llmModel == CleanupEngine.skipped ? Strings.viaSkipped
                 : (queue[i].cleaned != nil ? Strings.viaCleaned : nil)
+            let fallback = queue[i].fallback
             queue.remove(at: i)
             var effects: [Effect] = [.reportInjected(id, how)]
             let next = insertHeadIfReady()
             effects += next
-            if next.isEmpty { effects.append(.hud(.done(preview: preview, via: via))) }
+            // A raw fallback says so in place of `.done`, for as long as `.done` would have stayed.
+            if next.isEmpty {
+                if let r = fallback {
+                    effects.append(.hud(.message(r == .unauthorized ? Strings.tokenInvalid : Strings.pastedRaw)))
+                } else {
+                    effects.append(.hud(.done(preview: preview, via: via)))
+                }
+            }
             return effects
 
         case .insertFailed(let id):

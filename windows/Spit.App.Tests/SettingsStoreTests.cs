@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using Spit.Core;
 
 namespace Spit.App.Tests;
 
@@ -26,6 +27,18 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.False(settings.Onboarded);
         Assert.True(settings.ShowBar);
         Assert.False(settings.LiveTranscription);
+    }
+
+    /// Rule 7 (prd-windows-parity.md): a changed default reaches new installs only. An install that never changed a
+    /// setting must still have its model in the file, or the next build's default would quietly replace it.
+    [WindowsFact]
+    public void AFirstLaunch_PinsTheModelItStartsWith()
+    {
+        var paths = new AppPaths(temp.Path);
+        _ = new SettingsStore(paths);
+
+        using var json = JsonDocument.Parse(File.ReadAllBytes(paths.SettingsFile));
+        Assert.Equal(ModelCatalog.DefaultFile, json.RootElement.GetProperty("modelFile").GetString());
     }
 
     [WindowsFact]

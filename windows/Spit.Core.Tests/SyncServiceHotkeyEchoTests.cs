@@ -29,6 +29,37 @@ public sealed class SyncServiceHotkeyEchoTests
         Assert.Equal("rightCtrl", settings.Hotkey);
     }
 
+    /// Checklist item 12: the Mac changed its key after the PC's last sync. The PUT replaces the whole record, so a
+    /// Mode change on the PC must carry the key the server holds now, not the one it held ten minutes ago.
+    [Fact]
+    public async Task testModeChangeEchoesTheHotkeyTheServerHoldsNowNotAtTheLastSync()
+    {
+        var api = new StubApi { MeResult = Result<MeResponse>.Success(SyncServiceTests.meResponse("clean", "auto", "fn")) };
+        var s = new SyncService(api, new InMemoryLocalSettings());
+        await s.SyncAsync();
+        api.MeResult = Result<MeResponse>.Success(SyncServiceTests.meResponse("clean", "auto", "rightOption"));
+
+        await s.PushAsync(mode: "literal");
+
+        var put = Assert.Single(api.Puts);
+        Assert.Equal(new ServerSettings("literal", "auto", "rightOption", null), put);
+    }
+
+    [Fact]
+    public async Task testNoPutWhenTheServerCannotBeReadJustBefore()
+    {
+        var api = new StubApi { MeResult = Result<MeResponse>.Success(SyncServiceTests.meResponse("clean", "auto", "rightCommand")) };
+        var settings = new InMemoryLocalSettings();
+        var s = new SyncService(api, settings);
+        await s.SyncAsync();
+        api.MeResult = Result<MeResponse>.Failure(ApiException.Offline());
+
+        await s.PushAsync(mode: "literal");
+
+        Assert.Empty(api.Puts);
+        Assert.Equal("literal", settings.Mode);   // the local change still applies
+    }
+
     [Fact]
     public async Task testNoPutWithoutASuccessfulMe()
     {

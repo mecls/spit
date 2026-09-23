@@ -371,7 +371,7 @@ public sealed class Coordinator : IDisposable
 
             case TapLatch.Outcome.Latch:
                 CancelLatchWindow();
-                if (!capture.IsCapturing)
+                if (!machine.CanLatch || !capture.IsCapturing)
                 {
                     tapLatch.Reset();
                     break;
@@ -467,8 +467,11 @@ public sealed class Coordinator : IDisposable
         var wasLatched = model.IsLatched;
         ClearLatch();
         tapLatch.Reset();
+        transcribeRequested = false;
         Send(new MachineEvent.HotkeyUp());
-        if (wasLatched) ShowHud(new HUDState.Message(Strings.LatchCapReached));
+        // Only when the stop reached `.transcribe`. A session the reducer rejected (too little speech in 90 s) has
+        // just said "Nothing heard", and "— transcribing" over it read as a dictation lost (checklist item 6).
+        if (wasLatched && transcribeRequested) ShowHud(new HUDState.Message(Strings.LatchCapReached));
     }
 
     /// The bar's mic button. Mouse-started sessions are always hands-free: there is no mouse equivalent of

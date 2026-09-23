@@ -21,6 +21,28 @@ public sealed class DictationMachineTests
         Assert.Empty(m.Queue);
     }
 
+    /// A double-tap during the first launch's model load must not start a latched session. The gesture itself
+    /// is valid — `TapLatch` says `Latch` — so what stops it is `CanLatch`.
+    [Fact]
+    public void testADoubleTapWhileTheModelIsLoadingCannotLatch()
+    {
+        var m = new DictationMachine();
+        Assert.False(m.CanLatch);
+        Assert.Equal(Fx(Hud(new HUDState.ModelLoading(0))), m.Handle(new MachineEvent.HotkeyDown(null)));
+        Assert.Empty(m.Queue);
+
+        // The gesture does reach `Latch`, so the refusal above is the machine's and not an accident of the tap timing.
+        var t0 = DateTimeOffset.FromUnixTimeSeconds(1_000_000);
+        var latch = new TapLatch();
+        Assert.Equal([TapLatch.Outcome.StartDictation], latch.Handle(HotkeyAction.Press, t0));
+        Assert.Equal([TapLatch.Outcome.HoldOpen], latch.Handle(HotkeyAction.Release, t0.AddMilliseconds(100)));
+        Assert.Equal([TapLatch.Outcome.Latch], latch.Handle(HotkeyAction.Press, t0.AddMilliseconds(200)));
+
+        _ = m.Handle(new MachineEvent.ModelReady());
+        Assert.True(m.CanLatch);
+        Assert.Equal(Fx(new Effect.StartRecording(), Hud(new HUDState.Listening())), m.Handle(new MachineEvent.HotkeyDown(null)));
+    }
+
     [Fact]
     public void testHappyPath()
     {
@@ -91,9 +113,24 @@ public sealed class DictationMachineTests
         var id = m.Queue[0].ClientId;
         _ = m.Handle(new MachineEvent.AudioStopped([1], 1000, true));
         _ = m.Handle(new MachineEvent.Transcribed(id, "raw text", "en", 1));
-        Assert.Equal(Fx(new Effect.Insert(id, "raw text"), Hud(new HUDState.Message(Strings.PastedRaw))),
+        Assert.Equal(Fx(new Effect.Insert(id, "raw text")),
             m.Handle(new MachineEvent.Refined(id, new RefineResult.RawFallback(FallbackReason.Offline))));
-        Assert.Equal(Fx(new Effect.ReportInjected(id, Injected.Raw), Hud(new HUDState.Done("raw text", null))),
+        // Said after the paste, in place of Done: said before it, Done replaced it within milliseconds.
+        Assert.Equal(Fx(new Effect.ReportInjected(id, Injected.Raw), Hud(new HUDState.Message(Strings.PastedRaw))),
+            m.Handle(new MachineEvent.Inserted(id, Injected.Raw)));
+    }
+
+    [Fact]
+    public void testAnInvalidTokenSaysSoOnceTheRawTextIsPasted()
+    {
+        var m = Ready();
+        _ = m.Handle(new MachineEvent.HotkeyDown(null)); _ = m.Handle(new MachineEvent.HotkeyUp());
+        var id = m.Queue[0].ClientId;
+        _ = m.Handle(new MachineEvent.AudioStopped([1], 1000, true));
+        _ = m.Handle(new MachineEvent.Transcribed(id, "raw text", "en", 1));
+        Assert.Equal(Fx(new Effect.Insert(id, "raw text")),
+            m.Handle(new MachineEvent.Refined(id, new RefineResult.RawFallback(FallbackReason.Unauthorized))));
+        Assert.Equal(Fx(new Effect.ReportInjected(id, Injected.Raw), Hud(new HUDState.Message(Strings.TokenInvalid))),
             m.Handle(new MachineEvent.Inserted(id, Injected.Raw)));
     }
 

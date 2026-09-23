@@ -10,6 +10,32 @@ final class DictationMachineTests: XCTestCase {
         XCTAssertTrue(m.queue.isEmpty)
     }
 
+    /// A double-tap during the first launch's model load must not start a latched session.
+    ///
+    /// The gesture itself is valid — `TapLatch` says `.latch`, as asserted below — so nothing in the
+    /// key path stops it. What stops it is `canLatch`: `.hotkeyDown` refuses to start a dictation while
+    /// the model is loading, and latching over a dictation that never began leaves the bar claiming a
+    /// live microphone and makes the next press end a session that does not exist. Windows guarded this
+    /// in `Coordinator.Apply` (no latch without a capture); the Mac's key path had not.
+    func testADoubleTapWhileTheModelIsLoadingCannotLatch() {
+        var m = DictationMachine()
+        XCTAssertFalse(m.canLatch)
+        XCTAssertEqual(m.handle(.hotkeyDown(nil)), [.hud(.modelLoading(0))])
+        XCTAssertTrue(m.queue.isEmpty)
+
+        // The gesture does reach `.latch`, so the refusal above is the machine's and not an accident
+        // of the tap timing.
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        var latch = TapLatch()
+        XCTAssertEqual(latch.handle(.press, at: t0), [.startDictation])
+        XCTAssertEqual(latch.handle(.release, at: t0.addingTimeInterval(0.1)), [.holdOpen])
+        XCTAssertEqual(latch.handle(.press, at: t0.addingTimeInterval(0.2)), [.latch])
+
+        _ = m.handle(.modelReady)
+        XCTAssertTrue(m.canLatch)
+        XCTAssertEqual(m.handle(.hotkeyDown(nil)), [.startRecording, .hud(.listening)])
+    }
+
     func testHappyPath() {
         var m = ready()
         XCTAssertEqual(m.handle(.hotkeyDown(nil)), [.startRecording, .hud(.listening)])
@@ -65,8 +91,19 @@ final class DictationMachineTests: XCTestCase {
         let id = m.queue[0].clientId
         _ = m.handle(.audioStopped(samples: [1], ms: 1000, speech: true))
         _ = m.handle(.transcribed(id, text: "raw text", language: "en", ms: 1))
-        XCTAssertEqual(m.handle(.refined(id, .rawFallback(.offline))), [.insert(id, "raw text"), .hud(.message(Strings.pastedRaw))])
-        XCTAssertEqual(m.handle(.inserted(id, .raw)), [.reportInjected(id, .raw), .hud(.done(preview: "raw text", via: nil))])
+        XCTAssertEqual(m.handle(.refined(id, .rawFallback(.offline))), [.insert(id, "raw text")])
+        // Said after the paste, in place of `.done`: said before it, `.done` replaced it within milliseconds.
+        XCTAssertEqual(m.handle(.inserted(id, .raw)), [.reportInjected(id, .raw), .hud(.message(Strings.pastedRaw))])
+    }
+
+    func testAnInvalidTokenSaysSoOnceTheRawTextIsPasted() {
+        var m = ready()
+        _ = m.handle(.hotkeyDown(nil)); _ = m.handle(.hotkeyUp)
+        let id = m.queue[0].clientId
+        _ = m.handle(.audioStopped(samples: [1], ms: 1000, speech: true))
+        _ = m.handle(.transcribed(id, text: "raw text", language: "en", ms: 1))
+        XCTAssertEqual(m.handle(.refined(id, .rawFallback(.unauthorized))), [.insert(id, "raw text")])
+        XCTAssertEqual(m.handle(.inserted(id, .raw)), [.reportInjected(id, .raw), .hud(.message(Strings.tokenInvalid))])
     }
 
     func testTranscriptionFailureDropsTheDictation() {

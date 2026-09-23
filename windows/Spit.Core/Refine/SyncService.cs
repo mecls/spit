@@ -5,8 +5,8 @@ namespace Spit.Core;
 ///
 /// - the server's `hotkey` is the Mac's (`fn` | `rightOption` | `rightCommand`) and is never applied
 ///   here — there is no hotkey callback and `ILocalSettings.Hotkey` is never written;
-/// - a PUT sends `hotkey` and `llmModel` exactly as last received (the Mac's G3 merge), so changing Mode
-///   on the PC cannot reset the Mac's key to `fn`;
+/// - a PUT sends `hotkey` and `llmModel` exactly as the server holds them (the Mac's G3 merge, onto a
+///   `/v1/me` read just before the PUT), so changing Mode on the PC cannot reset the Mac's key;
 /// - with no successful `/v1/me` this process lifetime there is nothing to echo, so no PUT is sent at
 ///   all. The next successful sync's server values win, as on the Mac when its PUT fails.
 public sealed class SyncService : IDisposable
@@ -89,21 +89,46 @@ public sealed class SyncService : IDisposable
 
     /// A user-initiated Mode or Language change. The local write always happens; the PUT only when a
     /// `/v1/me` has succeeded this launch and something actually changed.
+    ///
+    /// The PUT replaces the whole record, `hotkey` included, so the record is read again just before it. The copy
+    /// from the last sync can be ten minutes old — long enough for the Mac to have changed its key — and echoing it
+    /// would put the old key back (checklist item 12). If that read fails, nothing is sent: the same outcome as a
+    /// failed PUT, where the next successful sync's values win.
     public async Task PushAsync(string? mode = null, string? language = null)
     {
         if (mode is not null) _settings.Mode = mode;
         if (language is not null) _settings.Language = language;
 
-        ServerSettings merged;
+        int credentialChanges;
         lock (_gate)
         {
             // Rule 46: nothing received, nothing to echo — never invent a hotkey or clear an llmModel.
             if (_last is null) return;
-            // G3: merge onto the last server settings so fields not being changed — `hotkey`, `llmModel`
-            // — go back exactly as received.
-            merged = _last with { Mode = mode ?? _last.Mode, Language = language ?? _last.Language };
-            // No-op guard: kills the echo when a sync just wrote this same value into the settings UI.
-            if (merged == _last) return;
+            // No-op guard, before any network: kills the echo when a sync just wrote this same value into the
+            // settings UI.
+            if (_last with { Mode = mode ?? _last.Mode, Language = language ?? _last.Language } == _last) return;
+            credentialChanges = _credentialChanges;
+        }
+
+        ServerSettings current;
+        try
+        {
+            current = (await _api.MeAsync().ConfigureAwait(false)).Settings;
+        }
+        catch (Exception)
+        {
+            return;
+        }
+
+        ServerSettings merged;
+        lock (_gate)
+        {
+            if (credentialChanges != _credentialChanges) return;
+            _last = current;
+            // G3: merge onto the server's settings as they are now, so the fields not being changed — `hotkey`,
+            // `llmModel` — go back exactly as they stand.
+            merged = current with { Mode = mode ?? current.Mode, Language = language ?? current.Language };
+            if (merged == current) return;
         }
 
         try

@@ -1,0 +1,229 @@
+# Windows Parity — Task List
+
+Source spec: `tasks/prd-windows-parity.md`. Rule numbers below refer to its §2, thresholds to its §5.
+
+## Relevant Files
+
+### The measurement harness that already exists — reuse it, do not write a second one
+
+- `windows/Spit.App/App/SmokeTest.cs` - `--smoke-test <wav> --report <json>` already emits everything S1 needs: `AudioMs`, `TranscribeMs`, `Runtime`, `RuntimeRequested`, `BackendLog`, `AsrModel`. It also emits `StreamMs`, `StreamSegments` and **`WholePassFallback`** — the exact boolean rule 15 is about
+- `windows/Spit.App/Asr/WhisperTranscriber.cs` - `RuntimeVariable = "SPIT_WHISPER_RUNTIME"` at `:27` forces `cpu`/`vulkan`; `BackendLog` at `:35` proves which one actually loaded (rule 5); `ConfigureRuntimes()` at `:173` sets the fall-through order
+- `.github/workflows/windows-ci.yml` - `:116-120` already drives the smoke test across runtimes; copy that loop's shape for the S1 matrix
+- `windows/Spit.App/Program.cs` - `KeyLogFlag = "--key-log"` at `:8`, the S4 harness
+
+### Windows — what the spikes settle
+
+- `windows/Spit.Core/Asr/ModelCatalog.cs` - `DefaultFile` at `:19`, and the `:7-10` header comment whose reasoning rule 6 replaces with a measured number
+- `windows/Spit.App/Platform/KeyboardHook.cs`, `MenuMask.cs`, `KeyLog.cs` - S4's subjects: `CallNextHookEx` (rule 11), `vkE8` masking (rule 12)
+- `windows/Spit.Core/Hotkey/HotkeyChoice.cs`, `HotkeyTranslator.cs` - lose the `rightAlt` case if S4 fails (rule 2)
+- `windows/Spit.App/Platform/ElevationProbe.cs` - S3's subject
+- `windows/Spit.App/Inject/ClipboardSession.cs`, `ClipboardSnapshot.cs` - S2's subjects; the 1.5 s restore (rules 9-10)
+
+### Live transcription (rules 14-16)
+
+- `windows/Spit.Core/Asr/Stitch.cs` - `Join`, `TryJoin`, `TryJoinAllowingTailSkip` at `:27/:36/:46`
+- `windows/Spit.Core/Asr/StreamTail.cs` - `OverlapMs = 1500` at `:15`, `MinimumTailMs = 400` at `:8`
+- `windows/Spit.Core/Asr/StreamingPolicy.cs` - `RequiredSegmentsForConfirmation = 2` at `:23`, `MinimumNewAudioSeconds = 1` at `:27`; ported from WhisperKit, never measured on Windows
+- `windows/Spit.App/Asr/LiveTranscription.cs`, `windows/Spit.Core/Asr/StreamingSession.cs` - the loop being tuned
+
+### Mac — the back-port (rules 17-19)
+
+- `mac/Voice/ASR/Stitch.swift` - has only `join(streamed:tail:)`; **gains `tryJoin` and `tryJoinAllowingTailSkip`** (rule 17)
+- `mac/Voice/App/Coordinator.swift` - `:251` finishes the stream on `.discardRecording`; audit for Windows' second path at `Coordinator.cs:614` (rule 19). No guard against latching during model load (rule 18)
+- `mac/Voice/Hotkey/TapLatch.swift`, `mac/Voice/App/DictationMachine.swift` - where rule 18's guard lands
+
+### Docs and evidence
+
+- `docs/SPIKES.md` - every spike's raw evidence (rule 1); the existing format to follow
+- `tasks/prd-spit-mac-windows.md` - §5 holds the 15-item Windows checklist and the latency SQL
+- `README.md` - the "What's missing" list this work closes out
+- `SintraLabs/site/spit/index.html` - **outside this repo**; the marked placeholder for rule 21's screenshots
+
+### Test files
+
+- `windows/Spit.Core.Tests/StitchTests.cs`, `StreamTailTests.cs`, `StreamingPolicyTests.cs` - must still pass after any live-transcription tuning
+- `windows/Spit.Core.Tests/HotkeyTranslatorTests.cs`, `HotkeyInterpreterTests.cs` - change only if S4 drops `rightAlt`
+- `windows/Spit.App.Tests/ElevationProbeTests.cs`, `ClipboardSnapshotTests.cs` - the existing unit cover for S3 and S2
+- `mac/VoiceTests/StitchTests.swift` - gains the Windows cases, renamed to the Mac's convention (rule 20)
+- `mac/VoiceTests/TapLatchTests.swift` or `DictationMachineTests.swift` - rule 18's new test
+
+### Notes
+
+- **Windows tests** live beside the code in `windows/Spit.Core.Tests/` and `windows/Spit.App.Tests/`. The runner is **Microsoft.Testing.Platform**, set in root `global.json` — the .NET 10 SDK refuses VSTest for xunit.v3, so do not add `Microsoft.NET.Test.Sdk`.
+- **On this Mac, use `~/.dotnet/dotnet`, not `dotnet`.** `/usr/local/share/dotnet` holds only SDK 6.0.400, which `global.json` rejects; the 10.0.401 SDK is in `~/.dotnet`.
+- **On this Mac, `dotnet test` reports `Zero tests ran` / exit code 5 even when everything passes.** Verified 2026-09-22 with SDK 10.0.401: the same assembly run directly reports 213 passing. CI is unaffected (it resolves a 10.0.1xx SDK through `global.json`). Run the module instead, from the repo root:
+  `~/.dotnet/dotnet windows/Spit.Core.Tests/bin/Debug/net10.0/Spit.Core.Tests.dll`
+  Do not read that exit code 5 as a broken build at the PC.
+- **The WPF app compiles on the Mac** with `-p:EnableWindowsTargeting=true`:
+  `~/.dotnet/dotnet build windows/Spit.App/Spit.App.csproj -p:EnableWindowsTargeting=true`
+  This is bigger than it looks — every C# change in 1.0 and 3.0 can be compile-checked here, so the PC sessions are for *running*, never for finding a typo.
+- `Spit.Core.Tests` runs on the Mac too; `Spit.App.Tests` builds here but is a `win-x64` exe that cannot run here, and its tests are Windows-only anyway (`WindowsFactAttribute`).
+- **Mac tests** are XCTest in one flat bundle at `mac/VoiceTests/`. Run from `mac/`: `xcodebuild -project Voice.xcodeproj -scheme Voice -derivedDataPath build/test-dd -quiet test`. **There is no macOS CI** — a person runs every one.
+- **The "143 tests" figure this list was written with is stale.** Measured 2026-09-22: **150 tests, 1 skipped** before this work, 154 after. `-quiet` hides the totals; `grep -E "Executed [0-9]+ test|TEST SUCCEEDED|TEST FAILED"` over the unquieted output is the way to read them.
+- After any `mac/project.yml` change: `xcodegen generate` from `mac/` first.
+- The installer is built by `windows/scripts/pack.ps1`; Velopack names it `Spit-win-Setup.exe` and the script renames it to `Spit-Setup.exe`.
+- Tasks marked **(PC)** need Miguel's Windows machine. Everything else is doable on the Mac.
+
+## Instructions for Completing Tasks
+
+As you complete each sub-task, check it off by changing `- [ ]` to `- [x]`, and save the file
+then — not at the end of the parent task. Someone picking this up after an interruption can
+only trust the boxes if they were ticked as the work happened.
+
+## Tasks
+
+- [x] 0.0 Create a feature branch for this work
+  - [x] 0.1 Branch `feat/windows-parity` off `main` — **not** off the current `docs/parakeet-english-engine`, which is an open, unrelated docs PR
+
+- [x] 1.0 Prepare the spike session on the Mac, so PC time is spent measuring rather than authoring
+  - [x] 1.1 Add a `--model <file>` argument to `SmokeTest.Parse` / `Run` in `windows/Spit.App/App/SmokeTest.cs`. **Blocking for S1:** `:96` currently hardcodes `var file = ModelCatalog.DefaultFile`, so the harness can only ever measure one of the three models. Default to `ModelCatalog.DefaultFile` when the flag is absent, so `windows-ci.yml` keeps working unchanged
+  - [x] 1.2 Extend the smoke `Report` record with the wall-clock of the whole run and the resolved model path, if `TranscribeMs` and `AsrModel` do not already cover what rule 4's median needs
+    - Added `modelFile` and `wavFile`, so a folder of 36 reports collates without trusting the driver's file names. **Deliberately no whole-run wall clock:** rule 4's median is the one-pass time and `transcribeMs` is exactly that; a second duration that also counted the model load would be the easy column to median by mistake.
+    - Checked while doing it: each smoke run is a fresh process, so every `transcribeMs` is a *cold first* transcription. That is the right comparison — the Mac's 3.0 s bound in `WhisperKitTranscriberTests:35` is also a first transcription after a model load in a fresh process, so rule 6's ≤ 3.15 s is like-for-like. **Do not "fix" the driver by warming the model up first**; it would silently make the Windows number the easier one.
+  - [x] 1.3 Add a test in `windows/Spit.App.Tests/SmokeTestLoaderTests.cs` for `--model`: absent → `DefaultFile`; present with a catalog file → that file; present with an unknown file → usage exit code 2, not a crash
+  - [x] 1.4 Write `windows/scripts/spike-s1.ps1`: 2 runtimes (`SPIT_WHISPER_RUNTIME=cpu|vulkan`) × 3 models × 2 fixtures (`mac/Fixtures/en.wav`, `pt-synthetic.wav`) × 3 repetitions, one `--report` JSON per run into a folder, **discarding the first repetition of each pair** (rule 4). Copy the loop shape from `.github/workflows/windows-ci.yml:116-120`
+  - [x] 1.5 Make `spike-s1.ps1` print a markdown table of medians plus, for every Vulkan row, the `BackendLog` line naming the device — a Vulkan row with no device line is a failed measurement, not a slow one (rule 5)
+    - Dry-run against a stand-in binary on the Mac: all 36 runs, the table, both **VOID** causes (fell through to CPU / loaded Vulkan but printed no device line, which are different problems), the preflight that names every missing model and the exe at once, and the rule 6 verdict sentence with both numbers in it. The script has never met a real GPU, but it has met its own edge cases.
+    - It also prints, ready to paste into `docs/SPIKES.md`, the exact sentence task 3.4 asks for, and says whether 3.5 or 3.6 comes next.
+  - [x] 1.6 Add five empty sections to `docs/SPIKES.md` (S1–S5) in its existing format, each with the pass condition and the pre-agreed failure branch from spec rule 2, so evidence lands in the right shape under time pressure
+    - Each section carries its pass condition, its failure branch, and an empty table shaped for the answer, so the PC session is filling blanks rather than deciding what to write down.
+  - [x] 1.7 Make the two S5 installers a one-line job, so the PC session does not start with an improvised build. This is the one spike with a real setup cost
+    - **Correction: the installers cannot be built on the Mac.** Velopack 1.2.0's `vpk` changes its whole command surface with the host OS — on macOS `vpk pack` defaults to `--channel osx`, offers `--bundleId`/`--plist`/`--notaryProfile`, and rejects a `.ico`; there is no target-OS selector. `tasks/spit-mac-windows-build-spec.md:410`'s "verified by cross-packing on the Mac" does not hold for the pack step.
+    - What *was* verified on the Mac: `dotnet publish -r win-x64 --self-contained -p:EnableWindowsTargeting=true` completes and stamps the version (`0.2.0-test` is in the published `Spit.dll`). Only the `vpk pack` leg needs Windows.
+    - So `pack.ps1` gained `-PackVersion` and `-OutputDir` instead, and the two builds are now **(PC)** work at the top of 2.0:
+      `pwsh windows/scripts/pack.ps1 -PackVersion 0.2.0-test -OutputDir windows/Releases/s5-0.2.0`
+      `pwsh windows/scripts/pack.ps1 -PackVersion 0.2.1-test -OutputDir windows/Releases/s5-0.2.1`
+    - `-PackVersion` deliberately does not write `VERSION`: `scripts/check-version.sh` compares it to `mac/project.yml`, so a committed `0.2.1-test` would fail CI on both clients. It sets `InformationalVersion` only — `AssemblyVersion` would become the invalid `0.2.0-test.0` — which is what `Coordinator.ClientVersion` reads, so the two S5 installs identify themselves on the wire.
+  - [x] 1.8 Run the Windows test suite on the Mac and record the passing count as the pre-session baseline (`Spit.Core.Tests` runs here; `Spit.App.Tests` is Windows-only)
+    - **Baseline: 213 total, 0 failed, 0 skipped** (`Spit.Core.Tests`, 2026-09-22). `Spit.App.Tests` compiles here and must be counted on the PC.
+  - [x] 1.9 Give S2 a harness. Found while re-reading 2.8 against the code: nothing in `windows/` delay-renders or handles `WM_RENDERFORMAT` (rule 32's default places text directly), so "log which process triggers the first `WM_RENDERFORMAT`" had no code to observe and the PC session would have opened with Win32 authoring
+    - `Spit.exe --clip-log` (`Platform/ClipLog.cs`): a message-only owner window promises a made-up marker by delayed rendering beside the exclusion format, and prints each `WM_RENDERFORMAT` with the reader's process (`GetOpenClipboardWindow`, the window holding the clipboard open while it waits), the ms since placement, and the foreground process. It reads the Clipboard History registry setting on start, so the evidence says it was on. Enter runs the next round.
+  - [x] 1.10 Give S3 a harness, for the same reason: `ElevationProbe` answers only inside a paste, and nothing prints its answer
+    - `Spit.exe --elevation-log` (`Platform/ElevationLog.cs`): each new foreground process → integrity level, `IsElevated`, `BlocksInputFromSpit`, and the `PasteRoute` that answer picks. Its first line says whether Spit itself is elevated, which S3 needs to be false.
+    - The three console harnesses now share `DiagnosticConsole.Open`, lifted out of `KeyLog`.
+  - [x] 1.11 Make session 3 measurable. Two gaps, both found reading 5.1 against the code:
+    - **The texts had nowhere to go.** Rule 16 says log the streamed and tail text, but `Log.cs` forbids dictated text in the log (rules 25-26), and real dictations are spoken once, while rule 15 needs a one-pass over *the same audio* and 5.6 re-runs *the same clips*. So: `Spit.exe --record-clips <folder>` (`App/ClipRecorder.cs`) records numbered WAVs through the dictation's own `AudioCapture`, and the smoke report gained `streamRawText`, `streamCoveredMs`, `tailText` and `overlapHadSpeech` — exactly what `StreamTail.Combine` was given.
+    - **The time bar would have been measured against the wrong one-pass.** The smoke test's `transcribeMs` is a cold first transcription (right for S1, rule 4's note), and the stream runs warm after it; rule 15's ratio against it would flatter streaming by the ~2x first-inference cost. `--warm-pass` adds `warmTranscribeMs`, a one-pass after the stream. CI and S1 pass no `--warm-pass`, so neither changes.
+    - `windows/scripts/spike-live.ps1 -Clips <folder>` replays every clip, prints rule 15's table and verdict, the 5.2 fallback count, and writes `live-texts.md` with the texts of every miss for 5.3. Dry-run on the Mac against a stand-in binary: an identical clip, a punctuation-only miss, a whole-pass fallback, a clip at x1.35, an out-of-range clip, a run with no texts, fewer than ten clips, and a missing folder all come out as intended.
+    - Tests (Windows-only, compile-checked here): `Parse_IsUnchangedByWarmPass`, `ARecordedClip_ReplaysAsExactlyTheSamplesCaptureProduced`, `ClipRecorder_NeedsAFolder`.
+  - [x] 1.12 Make S5 a before/after script, so the PC session records evidence rather than eyeballing Installed Apps
+    - `windows/scripts/spike-s5.ps1 -Snapshot before|after`: Installed Apps entries (HKCU and HKLM uninstall keys), the app's version, the data folder's files, Credential Manager targets under `co.miraside.voice` (the target only — the token is never read), the Run value and whether it still points at a file. `before` warns when there is no token, no Run entry or no data, since surviving the upgrade proves nothing about something that was never there; `after` prints S5's table and verdict.
+    - All four `.ps1` files parse under PowerShell 7.6 on the Mac; `spike-s5.ps1` touches the registry and `cmdkey`, so only its parse is checked here.
+    - `.github/workflows/spike-s5.yml` runs it on a GitHub Windows runner: packs both builds, installs 0.2.0-test, seeds the token and Run value in the app's own formats, leaves Spit running, installs 0.2.1-test over it and fails on any check. Not a substitute for 2.14 — a runner is Windows Server, elevated, with no Edge download — but it runs the script on real Windows before the PC depends on it, and re-runs whenever packing or storage changes.
+    - `windows/.gitignore` now ignores `spike-s1/` and `spike-s5/`: S1's 36 reports would otherwise have landed as untracked files on the PC.
+
+  - [x] 1.13 Pre-flight the 15-item checklist against the code, so session 2 finds what only a PC can find. Three read-only reviews traced every item; each finding below was checked against the code before anything changed. Five were real and are fixed, with tests:
+    - **Item 3 — a screenshot on the clipboard was destroyed.** Rule 33's 5 MB cap was the Mac's, where a screenshot is compressed PNG; a Windows screenshot is an uncompressed DIB, 8.3 MB at 1920×1080. It was left out of the snapshot, and the restore then emptied the clipboard. Bitmaps now get 128 MB (`ClipboardSnapshot.MaxBitmapBytes`; rule 33 amended in `prd-spit-mac-windows.md`). Test: `AFullHdScreenshot_ComesBackAfterTheDictation`.
+    - **Items 9 and 5 — "Pasted raw" was unreadable, and could hide the admin message.** The reducer said it when the fallback was decided, before the paste; `Done` replaced it ~30 ms later on Windows (~150 ms on the Mac). And in an admin window a clipboard-only paste completes synchronously, so its "Admin window — text copied" came first and "Pasted raw" replaced it: the text sat on the clipboard with nothing saying so — rule 13's silent failure. The fallback message now replaces `Done` after the paste, on **both clients** (shared reducer; `testRawFallbackPastesRawAndReportsRaw` updated on both, `testAnInvalidTokenSaysSoOnceTheRawTextIsPasted` added on both).
+    - **Item 12 — a Mode change on the PC could put back the Mac's old hotkey.** `PUT /v1/settings` replaces the whole record, and the PC merged onto its copy from the last sync, up to 10 minutes old. It now reads `/v1/me` just before the PUT, and sends nothing if that read fails. Tests: `testModeChangeEchoesTheHotkeyTheServerHoldsNowNotAtTheLastSync`, `testNoPutWhenTheServerCannotBeReadJustBefore`.
+    - **Item 15 — uninstalling left a "Spit" startup entry pointing at a deleted file.** Velopack removes the program, not the Run value. `OnBeforeUninstallFastCallback` now removes it when it launches this install (`LaunchAtLogin.RemoveIfItLaunchesThisInstall`). Test: `Uninstall_RemovesOnlyAValueThatLaunchesThisInstall`; `spike-s5.yml` now also uninstalls **with Spit running**, which nothing covered — CI's own uninstall stops Spit first.
+    - **Item 6 — "Reached the 90 s limit — transcribing" over a session that was not transcribed.** A latched session with too little speech is rejected ("Nothing heard"), and the cap message then overwrote it. Shown now only when the stop reached `.transcribe`, on both clients.
+    - The rest are risks only a PC can settle; each is noted on its 4.x item below, with how to tell.
+    - After 1.13: Windows core **218** passing, parity Swift 113 / C# 113, Mac **155 tests, 1 skipped, 0 failures** (2026-09-23). The Windows-only tests are counted by CI (`app` job).
+
+- [ ] 2.0 **(PC)** Session 1 — run the five spikes in rule 3's order (S4 → S3 → S2 → S1 → S5) and commit the evidence
+  - [ ] 2.0a Build the two S5 installers first, since 1.7 could not (`pack.ps1 -PackVersion 0.2.0-test -OutputDir windows/Releases/s5-0.2.0`, then the same for `0.2.1-test`). Doing it now means S5 at the end of the session is an install, not a build
+  - [ ] 2.1 Install from `Spit-Setup.exe` the way a friend would — downloaded, not copied from a build folder — and confirm the install needs no admin prompt
+  - [ ] 2.2 **S4:** run `Spit.exe --key-log` and record `vkCode`, `scanCode`, flags and repeat counts for four gestures: hold Right Ctrl; hold Right Alt; AltGr+2 on the pt-PT layout; Right Ctrl+C
+  - [ ] 2.3 **S4:** check `vkE8` menu masking in **both** Notepad and File Explorer — they use different menu implementations, and rule 12 requires both (`windows/Spit.App/Platform/MenuMask.cs`)
+  - [ ] 2.4 **S4:** confirm nothing is swallowed (rule 11) — Right Ctrl+C still copies, AltGr+2 still types `@`
+  - [ ] 2.5 Write S4's raw evidence into `docs/SPIKES.md`. **If masking failed in either app, apply rule 2's branch now** — drop `rightAlt` — before any other spike runs against a hotkey that is going away
+  - [ ] 2.6 **S3:** from non-elevated Spit (`Spit.exe --elevation-log`, 1.10), read the foreground process with Notepad running as administrator, then with normal Notepad; confirm `ElevationProbe` answers correctly for both
+  - [ ] 2.7 Write S3's two answers into `docs/SPIKES.md`
+  - [ ] 2.8 **S2:** Clipboard History **on**, `Spit.exe --clip-log` (1.9), one round per target; paste into Notepad, Chrome and Word; record which process triggers the first `WM_RENDERFORMAT` in each
+  - [ ] 2.9 **S2:** press Win+V after each paste and confirm the dictation is absent. Rule 9 is unconditional — if the text is in history, stop the session and fix it before continuing
+  - [ ] 2.10 Write S2's three process names into `docs/SPIKES.md`
+  - [ ] 2.11 **S1:** run `spike-s1.ps1` and collect the JSON reports
+  - [ ] 2.12 **S1:** check every Vulkan row has a `BackendLog` device line naming a real GPU. If Vulkan silently fell through to CPU (rule 5), the numbers are void — fix the runtime resolution and re-run before recording anything
+  - [ ] 2.13 Write S1's 12 medians and every device string into `docs/SPIKES.md`
+  - [ ] 2.14 **S5:** install `0.2.0-test` (token pasted, Launch at login on, one dictation), `spike-s5.ps1 -Snapshot before`, install `0.2.1-test`, `spike-s5.ps1 -Snapshot after` (1.12); confirm exactly one entry in Installed Apps, and that the data directory, stored token and Run entry all survive
+    - Passed on a GitHub `windows-latest` runner first (2026-09-23, run 35922307917; `docs/SPIKES.md` S5). That settles the script and Velopack's upgrade on Windows Server; the PC run still owes a desktop Windows 11, a non-elevated user, an Edge download and a token and Run entry written by Spit itself
+  - [ ] 2.15 Write S5's result into `docs/SPIKES.md`, then commit all five sections
+
+- [ ] 3.0 Act on what the spikes returned — the hotkey, the clipboard delay, and the default model
+  - [ ] 3.1 If S4 failed: remove the `rightAlt` case from `windows/Spit.Core/Hotkey/HotkeyChoice.cs` and `HotkeyTranslator.cs`, drop its cases from `HotkeyTranslatorTests.cs` / `HotkeyInterpreterTests.cs`, and remove the option from the Settings hotkey picker
+  - [ ] 3.2 If S2 showed the target process always renders first: shorten the 1.5 s restore in `windows/Spit.App/Inject/ClipboardSession.cs`. **Never to zero** — rule 10; restoring early means Ctrl+V pastes the dictation instead of the user's own clipboard
+  - [ ] 3.3 If S4 and S2 passed as written: record "no change, rule held" in `docs/SPIKES.md` explicitly. A spike that changed nothing still has an outcome
+  - [ ] 3.4 Compare S1's median Vulkan one-pass time for `ggml-large-v3-turbo-q5_0.bin` on `en.wav` against rule 6's **≤ 3.15 s**, and write the comparison down as a sentence with both numbers in it
+  - [ ] 3.5 If it clears: change `ModelCatalog.DefaultFile` to `TurboCompressedFile` in `windows/Spit.Core/Asr/ModelCatalog.cs:19`
+  - [ ] 3.6 Rewrite `ModelCatalog.cs:7-10`'s header comment either way, citing the measured GPU number instead of the current "friends' PCs mostly have no GPU Vulkan can use" assumption (rule 6)
+  - [x] 3.7 Verify rule 7 holds in code: an existing install keeps the model it already downloaded and does not re-fetch 574 MB. Check `SettingsStore`'s `ModelFile` read path — `DefaultFile` must only apply when no setting exists
+    - **It held for most installs and not all.** `SettingsStore.Update` rewrites the whole record, `modelFile` included, on any change — onboarding, a synced mode or language — so those installs have their model pinned. But an install that never wrote `settings.json` (onboarding never finished, nothing changed) loaded `Settings.Defaults`, and a changed `DefaultFile` would have switched it silently and started the download rule 7 forbids.
+    - Fixed before anyone has installed it: `SettingsStore` writes its defaults on a first launch, so the model a build starts with is always in the file. Test: `SettingsStoreTests.AFirstLaunch_PinsTheModelItStartsWith`. Done ahead of 3.5 on purpose — the pin must ship in the build *before* any default change, or it pins the new default.
+  - [ ] 3.8 If the default changed: update `Strings.ModelLabelSmall` / `ModelLabelTurbo` so the labels no longer imply small is the fast choice
+  - [ ] 3.9 Run `dotnet test windows/Spit.sln` and confirm the baseline from 1.8 (218 since 1.13) still passes, minus any `rightAlt` cases deliberately removed in 3.1
+
+- [ ] 4.0 **(PC)** Session 2 — the 15-item manual checklist, with screenshots and triage
+  - [ ] 4.1 Item 1 + rule 21: download through Edge and capture screenshots of the Edge warning, SmartScreen, and Smart App Control if it fires. Confirm the install needs no admin prompt
+  - [ ] 4.2 Item 2: hold the hotkey and dictate into Notepad, Chrome and an Office app
+    - Watch in Word: two dictations in a row. Right Ctrl reaches Word (the hook never swallows), and Ctrl pressed and released alone after a paste opens Office's "Paste Options" menu, which Spit's Ctrl+V could then land on. Unconfirmed — only Word can say
+  - [ ] 4.3 Item 3: copy an image, dictate, press Ctrl+V — the image pastes (rule 10)
+    - Use **both** a small web image and a full-screen screenshot (Print Screen) — the screenshot is the case 1.13 fixed. Wait 2 s after the text appears before Ctrl+V: within 1.5 s the dictation is still on the clipboard by design (rule 32).
+    - Two known costs, not failures: reading a delay-rendered format (an Office or Photos copy) makes its app render it before the paste, so a big copy adds latency; and a restore that finds the clipboard busy for 200 ms is not retried until the next paste.
+  - [ ] 4.4 Item 4: Win+V history does not contain the dictated text (rule 9, unconditional)
+  - [ ] 4.5 Item 5: with Notepad running as administrator, the hotkey does nothing there, and the bar's mic-button session goes clipboard-only **with the admin message shown** — the silent failure is the unacceptable one (rule 13)
+    - Also run it once **with the network off**: before 1.13 that combination replaced the admin message with "Pasted raw".
+  - [ ] 4.6 Item 6: double-tap latches; Esc cancels; a 90 s latched session ends with "Reached the 90 s limit"
+    - **Talk for most of the 90 s.** The speech gate reads the loudest 5 % of the recording; one sentence followed by 80 s of silence is rejected as "Nothing heard" — by design, on both clients. After the limit the bar returns to idle while the long transcription runs; with Whisper small on a CPU that can be tens of seconds before the paste.
+  - [ ] 4.7 Item 7: plug a headset in mid-dictation — the whole dictation is still transcribed
+    - Confirm the switch actually happened: `audio input rebuilt after default device changed` in `%LOCALAPPDATA%\Miraside\Spit\logs`. If Windows does not make the headset the default input, the item passes without testing anything.
+    - Risk: the switch is tried once. A Bluetooth mic that takes over 3 s to start leaves the bar on "Listening" with a flat waveform, and everything after the switch is lost. A word said at the moment of plugging in can also be clipped (the old device closes before the new one opens).
+  - [ ] 4.8 Item 8: with microphone privacy off, the message and the settings button both appear
+    - **Wait 20 s after the previous dictation, or relaunch Spit, before testing.** Capture stays warm for 20 s after a dictation and a warm device is not reopened, so the privacy check never runs.
+    - The message and its button return to idle after 1.2 s, like every message on both clients — too short to click while holding the key. If that reads as a failure, it is a follow-up (a longer hold for messages that carry an action), not a quick fix: it changes the Mac too.
+  - [ ] 4.9 Item 9: network off gives "Pasted raw"; network back on plus one more dictation, and the offline one appears in `GET /v1/dictations`
+    - **Use Clean mode and more than 12 words for both dictations.** A short sentence ending in punctuation skips cleanup (SkipGate), and literal mode never calls it, so neither says "Pasted raw" offline. And the outbox is replayed only after a successful `/v1/refine`: a short "one more dictation" back online would not send the offline one. The replay-only-after-refine behaviour is shared with the Mac; if it matters, it is a follow-up for both.
+  - [ ] 4.10 Item 10: launch Spit twice — one instance, and its window comes forward
+  - [ ] 4.11 Item 11: close the window and confirm the hotkey still works; reboot and confirm launch-at-login survived
+    - Before rebooting, `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v Spit` must point at `%LOCALAPPDATA%\Spit\Spit.exe`. A value left by a dev build still shows the toggle as on and would launch the dev exe.
+  - [ ] 4.12 Item 12: change Mode on the PC, then confirm `GET /v1/settings` still shows the Mac's hotkey (rule 46 — Windows never writes the hotkey)
+    - Make it mean something: set the Mac to a non-default key (Right Option) first. 1.13 fixed the case where a recent Mac change was reverted.
+  - [ ] 4.13 Item 13: Insights shows the same totals as the Mac for the same user, and "Google Chrome" is a single bar
+  - [ ] 4.13a Item 14: sleep and wake the PC, then lock and unlock — the hotkey still works (rule 29, `HookWatchdog`)
+  - [ ] 4.13b Item 15: uninstall from Settings › Apps removes the program and leaves `%LOCALAPPDATA%\Miraside\Spit\`
+    - On a runner first (run 35924451389): `Update.exe --uninstall --silent` with Spit running removed the program, the Installed Apps entry, the process and — since 1.13 — the startup entry, and kept `settings.json`. The PC still owes the Settings › Apps route a friend would use
+    - Added 2026-09-23: `prd-spit-mac-windows.md` §5's checklist has **15** items, not 13 — items 14 and 15 were in the checklist and in no task, so session 2 would have skipped them without anyone deciding to. Lettered rather than renumbered so 4.14's triage keeps its number (7.7 and the spec refer to it)
+  - [ ] 4.14 Triage every failure into one of spec §3.2's three buckets — blocks-release, documented-limitation, or follow-up — and write the bucket down against the item. An item silently skipped is a failed checklist (§5.2)
+
+- [ ] 5.0 **(PC)** Session 3 — measure, then fix, live transcription
+  - [ ] 5.1 Record 10+ real clips of 10–30 s with `Spit.exe --record-clips <folder>` and run `spike-live.ps1 -Clips <folder>` (1.11), capturing the smoke `Report` fields per clip: `WholePassFallback`, `StreamMs`, `StreamSegments`, `StreamedText`, `Text`, `TranscribeMs`
+  - [ ] 5.2 Count how many of the 10 came back with `WholePassFallback == true`. That is the baseline, and it is the failure rule 15 exists to remove — the field already measures it, so no new instrumentation is needed
+  - [ ] 5.3 Read the logged streamed text against the tail text for the failing clips and identify **why** no seam was found — a word boundary, a repeated phrase, a gap longer than `MinimumTailMs`. Rule 16: do not touch a constant before this is written down
+  - [ ] 5.4 Tune `Stitch.TryJoinAllowingTailSkip` (`windows/Spit.Core/Asr/Stitch.cs:46`) and `StreamTail.OverlapMs` (`StreamTail.cs:15`, currently 1500) against those logs — not against the CI fixture, which is one clip of read speech
+  - [ ] 5.5 Keep `StitchTests.cs`, `StreamTailTests.cs` and `StreamingPolicyTests.cs` passing throughout. If a tuning change needs one of them edited, the change is probably wrong
+  - [ ] 5.6 Re-run the same 10 clips (`spike-live.ps1` with a new `-OutputDir`) and check rule 15's two conditions: streamed+stitched text character-identical to one-pass on **≥ 8 of 10**, and release-to-final-text **≤ 1.3 × the one-pass time on all 10**
+  - [ ] 5.7 If both hold, record it in `docs/SPIKES.md` and raise whether `LiveTranscription` should still default to `false` — that is Miguel's call, not the builder's. If either fails, leave the default at `false` and attach the logs to a numbered follow-up (rule 14)
+
+- [x] 6.0 Back-port the three Windows fixes to the Mac *(no PC needed — can run in parallel with 2.0–5.0)*
+  - [x] 6.1 Port `TryJoin` and `TryJoinAllowingTailSkip` from `windows/Spit.Core/Asr/Stitch.cs:36,46` into `mac/Voice/ASR/Stitch.swift` as `tryJoin` and `tryJoinAllowingTailSkip`, keeping Swift naming (rule 17)
+  - [x] 6.2 Find every caller of the Mac's `Stitch.join(streamed:tail:)` and switch the tail path to the try-variant, so a tail with no seam is **not** appended unconditionally — that unconditional append is the duplicated-words bug
+    - One production caller: `Coordinator.swift:286`. It now uses `tryJoinAllowingTailSkip` and, when no seam is found, asks the new `Coordinator.overlapHasSpeech(of:coveredMs:totalMs:)` (ported from `StreamTail.OverlapHasSpeech`) which of the two cases it is: **silent overlap → append** (the tail really is new speech), **spoken overlap → one pass over the whole recording**, which is exactly `StreamTail.Combine`'s rule. A failed whole pass falls back to the old append rather than losing the tail.
+    - **Latency trade-off worth Miguel's eye:** the Mac now sometimes pays a whole-recording pass where it used to paste immediately with duplicated words. It only fires when the overlap held speech *and* no seam was found even with two fragment words skipped — the duplication case — but it is a real change to a shipping path with no macOS CI behind it.
+  - [x] 6.3 Port the Windows `StitchTests.cs` cases into `mac/VoiceTests/StitchTests.swift`, renamed to the Mac's convention (rule 20)
+    - `StitchTests.cs` turned out to be a straight port *of the Mac's* file — nothing new in it. The cases worth back-porting were in `StreamTailCombineTests.cs`, and three came over: `testTryJoinReportsWhetherItFoundTheSeam`, `testOnlyTheSkippingVariantStepsOverACutOffWord` (Windows' `TheMacJoinNeverSkipsTailWords`, which still holds — `join` and `tryJoin` keep the original rule), and `testACutOffWordAtTheTailsStartStillFindsTheSeam`.
+  - [x] 6.4 Add the rule 18 guard: the Mac must refuse to latch while the model is still loading. Windows does this in `Coordinator.Apply` (`windows/Spit.App/App/Coordinator.cs:372`: no latch without a running capture; an earlier draft cited `:952`, which is the model-progress handler); the Mac's `Coordinator` has no equivalent
+    - The gap was narrower than the rule implies and worth writing down: the Mac's **mic-button** path already guarded it (`Coordinator.swift:419`, "Only latch if a recording actually started"). Only the **key** path did not. A double-tap during model load therefore set `isLatched` over a dictation `.hotkeyDown` had refused to start, and the next press ended a session that did not exist.
+    - The rule lives on the reducer as `DictationMachine.canLatch`, so it is testable; `Coordinator.apply(.latch)` guards on it and resets `TapLatch` so the two cannot disagree.
+  - [x] 6.5 Add a test for 6.4 in `mac/VoiceTests/TapLatchTests.swift` or `DictationMachineTests.swift`: a double-tap during model load does not start a latched session
+    - `DictationMachineTests.testADoubleTapWhileTheModelIsLoadingCannotLatch`. It asserts the gesture *does* reach `.latch`, so the refusal is provably the machine's rule and not an accident of the tap timing.
+    - **Honest gap:** the bundle has no `CoordinatorTests`, so the wiring — that `apply(.latch)` actually consults `canLatch` — is not covered by a test, only the rule itself. Same for 6.7's `transcribeRequested`. Worth a line when someone next touches `Coordinator`.
+  - [x] 6.6 **Audit before writing code (rule 19):** the Mac calls `streaming.finish()` on `.discardRecording` (`Coordinator.swift:251`); Windows finishes on two paths (`Coordinator.cs:540` and `:614`, the latter when `transcribeRequested` is false). Determine whether the Mac covers the second
+    - **It did not.** The Mac finished a stream in exactly two places — `.discardRecording` and `.transcribe` — and a stop the reducer rejects ("nothing heard": under `minimumMs`, or no speech) reaches neither. The stream was left running and the next dictation inherited it.
+  - [x] 6.7 If 6.6 found a gap, fix it with a test. If it found none, write a line in `docs/SPIKES.md` naming both Mac paths — spec open question 4 is closed either way, and a no-op commit is worse than a recorded audit
+    - Fixed the same way Windows does it: a `transcribeRequested` flag set false before `send(.audioStopped(…))` and true by the `.transcribe` effect. `send` dispatches effects synchronously, so reading the flag straight afterwards answers "did `.transcribe` fire?". Checking `streaming.isRunning` alone would have been wrong — `.transcribe` finishes the stream inside a `Task`, so it is still running at that moment, and finishing it there would have broken live transcription outright.
+  - [x] 6.8 Run the Mac suite from `mac/`: `xcodebuild -project Voice.xcodeproj -scheme Voice -derivedDataPath build/test-dd -quiet test`
+    - **154 tests, 1 skipped, 0 failures, `** TEST SUCCEEDED **`** (2026-09-22). 150 before, plus the 4 added here, all 4 confirmed passing by name in the log.
+  - [x] 6.9 Port the four new Mac tests back to Windows by name, so `windows/scripts/parity-check.sh` passes. PR #4's first CI run failed on exactly this: the parity contract (build spec rule 22) requires every test in the shared Mac classes to exist in C# under the same name, and 6.3/6.5 added four Mac-only ones
+    - `StitchTests.cs` gained the three stitch cases. Two of them already existed in `StreamTailCombineTests.cs` under other names (`TryJoinReportsWhetherItFoundTheSeam`, `TheMacJoinNeverSkipsTailWords`) and were **moved**, not copied; the third tests `Stitch` directly where the Windows original goes through `StreamTail.Combine`, so both stay.
+    - `DictationMachine.CanLatch` now exists on Windows too, and `Coordinator.Apply(Latch)` checks it beside `capture.IsCapturing`, so the rule lives in the reducer on both clients.
+    - **Windows baseline is now 215** (213 + 4 − 2 moved), 0 failed. Parity: Swift 112, C# 112. Mac: 154 tests, 1 skipped, 0 failures (2026-09-23).
+
+- [ ] 7.0 Close out: real-use latency, the docs that still claim Windows is unverified, and the follow-ups
+  - [ ] 7.1 **(PC)** Do 20 real dictations on the PC in ordinary use, not as a test
+  - [ ] 7.2 Run the latency SQL from `tasks/prd-spit-mac-windows.md` §5 and record p50 and p90 of `total_ms` grouped by `asr_model` (§5.6)
+  - [ ] 7.3 Compare the `whisper.cpp/%` rows against the Mac's `whisperkit/%` rows in the same query — the namespacing already separates the populations, and this is the number that says whether parity was actually reached
+  - [ ] 7.4 Update `README.md`: the Windows row no longer says "Never run on a physical PC", and the "What's missing" list loses items 1, 2 and 5
+  - [ ] 7.5 Fill the marked placeholder in `SintraLabs/site/spit/index.html` (**outside this repo**) with 4.1's screenshots, and remove the copy describing Windows as the slower platform if rule 8 fired
+  - [ ] 7.6 Tick off `tasks/tasks-spit-mac-windows.md` items 1.3–1.7 (the five spikes) and 9.1–9.2, pointing each at the `docs/SPIKES.md` section that settles it
+    - 9.2 ticked 2026-09-23 (the back-port is 6.0); 9.1 points at 5.0. The five spikes and 9.1 wait for the PC.
+  - [ ] 7.7 Record what is still open: item 9.3 (a spending ceiling for friends' cleanup on the Ollama key) and any 4.14 follow-ups, so closing this list does not quietly drop them

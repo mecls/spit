@@ -73,4 +73,41 @@ public sealed class StitchTests
     {
         Assert.Equal("one two three four five six", Stitch.Join("one two three four", "one two three four five six"));
     }
+
+    // Back-ported to mac/VoiceTests/StitchTests.swift together with `tryJoin`; they began here.
+
+    /// The bool is the whole point of `TryJoin`: false means the text is the tail appended, which is right for new
+    /// speech and a duplication otherwise. The caller — not `Stitch` — decides which.
+    [Fact]
+    public void testTryJoinReportsWhetherItFoundTheSeam()
+    {
+        Assert.True(Stitch.TryJoin("the build on friday after the review", "friday after the review and more", out var stitched));
+        Assert.Equal("the build on friday after the review and more", stitched);
+
+        Assert.False(Stitch.TryJoin("Hi Joel, quick", "Joel, quick update.", out var appended));
+        Assert.Equal("Hi Joel, quick Joel, quick update.", appended);
+        Assert.Equal(appended, Stitch.Join("Hi Joel, quick", "Joel, quick update."));
+    }
+
+    /// `Join` and `TryJoin` keep the Mac's original rule; only `TryJoinAllowingTailSkip` steps over a cut-off word.
+    [Fact]
+    public void testOnlyTheSkippingVariantStepsOverACutOffWord()
+    {
+        const string streamed = "the dashboard is running on Convex now";
+        const string tail = "board is running on Convex now, and more";
+
+        Assert.False(Stitch.TryJoin(streamed, tail, out _));
+        Assert.True(Stitch.TryJoinAllowingTailSkip(streamed, tail, out _));
+    }
+
+    /// The fifth review's case: the overlap cut "dashboard" to "board", and ordinary speech went to a whole pass.
+    [Fact]
+    public void testACutOffWordAtTheTailsStartStillFindsTheSeam()
+    {
+        Assert.True(Stitch.TryJoinAllowingTailSkip(
+            "the MiraSite dashboard is running on Convex now",
+            "board is running on Convex now, and the Olamaki lives on the VPS",
+            out var joined));
+        Assert.Equal("the MiraSite dashboard is running on Convex now, and the Olamaki lives on the VPS", joined);
+    }
 }
