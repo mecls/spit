@@ -181,6 +181,7 @@ only trust the boxes if they were ticked as the work happened.
   - [ ] 4.13 Item 13: Insights shows the same totals as the Mac for the same user, and "Google Chrome" is a single bar
   - [ ] 4.13a Item 14: sleep and wake the PC, then lock and unlock — the hotkey still works (rule 29, `HookWatchdog`)
   - [ ] 4.13b Item 15: uninstall from Settings › Apps removes the program and leaves `%LOCALAPPDATA%\Miraside\Spit\`
+    - On a runner first (run 35924451389): `Update.exe --uninstall --silent` with Spit running removed the program, the Installed Apps entry, the process and — since 1.13 — the startup entry, and kept `settings.json`. The PC still owes the Settings › Apps route a friend would use
     - Added 2026-09-23: `prd-spit-mac-windows.md` §5's checklist has **15** items, not 13 — items 14 and 15 were in the checklist and in no task, so session 2 would have skipped them without anyone deciding to. Lettered rather than renumbered so 4.14's triage keeps its number (7.7 and the spec refer to it)
   - [ ] 4.14 Triage every failure into one of spec §3.2's three buckets — blocks-release, documented-limitation, or follow-up — and write the bucket down against the item. An item silently skipped is a failed checklist (§5.2)
 

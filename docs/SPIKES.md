@@ -304,6 +304,21 @@ Worth knowing: Installed Apps shows `DisplayVersion` **0.2.1**, without `-test` 
 label there; the app itself reports 0.2.1-test. The two files before the upgrade are the day's log and
 `settings.json`, the latter written by the first launch alone (task 3.7's pin, seen working in a real install).
 
+Uninstalling with Spit still running (checklist item 15; run 35924451389, after task 1.13 added the uninstall hook):
+
+```
+Spit processes before uninstalling: 1
+uninstall exit 0
+```
+
+| after uninstalling with Spit running | result | what was seen |
+|---|---|---|
+| the program is gone | pass | current\Spit.exe exists: False |
+| no entry left in Installed Apps | pass | 0 entries |
+| no Spit process left | pass | 0 running |
+| the data folder survived | pass | settings.json exists: True |
+| the startup entry was removed | pass | gone |
+
 What this does not cover, and the PC run (task 2.14) still must: a desktop Windows 11 rather than Windows Server, a
 non-elevated user, the installer downloaded through Edge and run by double-click rather than `--silent`, and a token
 and Run entry written by Spit's own Settings page rather than seeded.
