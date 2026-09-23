@@ -66,7 +66,10 @@ jobs:
           # What Settings writes, in the app's own formats: the token (TokenStore: a generic credential named
           # co.miraside.voice:<server URL>) and the Run value (LaunchAtLogin: the Velopack stub, quoted).
           cmdkey /generic:'co.miraside.voice:https://voice.miraside.co' /user:'https://voice.miraside.co' /pass:'s5-test-token' | Out-Null
-          New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Spit -Value "`"$stub`"" -PropertyType String -Force | Out-Null
+          # Some runner images have no Run key at all; LaunchAtLogin creates it (CreateSubKey), so this does too.
+          $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          if (-not (Test-Path $runKey)) { New-Item -Path $runKey -Force | Out-Null }
+          New-ItemProperty -Path $runKey -Name Spit -Value "`"$stub`"" -PropertyType String -Force | Out-Null
 
           windows/scripts/spike-s5.ps1 -Snapshot before
 
