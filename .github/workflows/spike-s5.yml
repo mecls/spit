@@ -1,0 +1,97 @@
+# Spike S5 on a GitHub Windows runner: install 0.2.0-test, then 0.2.1-test over it while Spit is running, with
+# windows/scripts/spike-s5.ps1 taking the same before/after snapshots the PC session takes (prd-windows-parity.md
+# §3.1 step 5). It does not replace the PC run — a runner is Windows Server, runs elevated, and nobody downloads
+# anything through Edge — but it runs the script on Windows before the PC session depends on it, and it catches an
+# upgrade regression whenever packing or storage changes.
+name: spike-s5
+
+on:
+  pull_request:
+    paths:
+      - windows/scripts/pack.ps1
+      - windows/scripts/spike-s5.ps1
+      - windows/Spit.App/Storage/**
+      - windows/Spit.App/Spit.App.csproj
+      - .github/workflows/spike-s5.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spike-s5-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+
+jobs:
+  upgrade:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Pack 0.2.0-test and 0.2.1-test
+        shell: pwsh
+        run: |
+          windows/scripts/pack.ps1 -PackVersion 0.2.0-test -OutputDir windows/Releases/s5-0.2.0
+          windows/scripts/pack.ps1 -PackVersion 0.2.1-test -OutputDir windows/Releases/s5-0.2.1
+
+      - name: Install 0.2.0-test, with a token, a Run entry and data
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $install = Join-Path $env:LOCALAPPDATA 'Spit'
+          $data = Join-Path $env:LOCALAPPDATA 'Miraside\Spit'
+          $stub = Join-Path $install 'Spit.exe'
+          $exe = Join-Path $install 'current\Spit.exe'
+
+          $p = Start-Process -FilePath (Resolve-Path windows/Releases/s5-0.2.0/Spit-Setup.exe) -ArgumentList '--silent' -PassThru -Wait
+          "setup 0.2.0-test exit $($p.ExitCode)"
+          for ($i = 0; $i -lt 60 -and -not (Test-Path $exe); $i++) { Start-Sleep 1 }
+          if (-not (Test-Path $exe)) { throw "$exe was not installed" }
+
+          # Running, as it would be on a friend's PC when they run the newer installer. The app writes its own data
+          # folder (log, settings.json); Velopack may already have started it after installing.
+          if (-not (Get-Process Spit -ErrorAction SilentlyContinue)) { Start-Process -FilePath $exe | Out-Null }
+          for ($i = 0; $i -lt 30 -and -not (Test-Path (Join-Path $data 'settings.json')); $i++) { Start-Sleep 1 }
+
+          # What Settings writes, in the app's own formats: the token (TokenStore: a generic credential named
+          # co.miraside.voice:<server URL>) and the Run value (LaunchAtLogin: the Velopack stub, quoted).
+          cmdkey /generic:'co.miraside.voice:https://voice.miraside.co' /user:'https://voice.miraside.co' /pass:'s5-test-token' | Out-Null
+          New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Spit -Value "`"$stub`"" -PropertyType String -Force | Out-Null
+
+          windows/scripts/spike-s5.ps1 -Snapshot before
+
+      - name: Install 0.2.1-test over it and compare
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $env:LOCALAPPDATA 'Spit\current\Spit.exe'
+          "Spit processes before the upgrade: $(@(Get-Process Spit -ErrorAction SilentlyContinue).Count)"
+          $p = Start-Process -FilePath (Resolve-Path windows/Releases/s5-0.2.1/Spit-Setup.exe) -ArgumentList '--silent' -PassThru -Wait
+          "setup 0.2.1-test exit $($p.ExitCode)"
+          for ($i = 0; $i -lt 60 -and -not ((Test-Path $exe) -and (Get-Item $exe).VersionInfo.ProductVersion -like '0.2.1*'); $i++) { Start-Sleep 1 }
+          windows/scripts/spike-s5.ps1 -Snapshot after
+
+      - name: Summary
+        if: always()
+        shell: pwsh
+        run: |
+          $table = 'windows/spike-s5/table.md'
+          if (Test-Path $table) {
+            "### S5 on windows-latest (not the PC)`n" >> $env:GITHUB_STEP_SUMMARY
+            Get-Content $table >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spike-s5-snapshots
+          path: windows/spike-s5/
+          if-no-files-found: warn

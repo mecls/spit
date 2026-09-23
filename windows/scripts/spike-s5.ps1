@@ -91,9 +91,11 @@ $checks = @(
 $table = @('| check | result | what was seen |', '|---|---|---|')
 foreach ($c in $checks) { $table += "| $($c.Name) | $(if ($c.Ok) { 'pass' } else { '**FAIL**' }) | $($c.Seen) |" }
 Write-Output "`n$($table -join "`n")`n"
+$table | Set-Content -Path (Join-Path $OutputDir 'table.md') -Encoding utf8
 $failed = @($checks | Where-Object { -not $_.Ok })
 if ($failed.Count -eq 0) {
     Write-Output 'S5 passes: paste the table into docs/SPIKES.md (task 2.15).'
 } else {
     Write-Output "S5 fails ($($failed.Count) check(s)). Rule 2's branch applies: the /spit page tells users to uninstall first. Record the table in docs/SPIKES.md."
+    exit 1
 }

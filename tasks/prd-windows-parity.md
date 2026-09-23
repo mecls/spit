@@ -15,8 +15,8 @@ uninstalls it. In places it is ahead of the Mac — `HookWatchdog`, `ElevationPr
 
 What it has never had is **a real key press, a real microphone, a real GPU, or a real user**. Five
 spikes (S1–S5) were specified before the UI was built and never run, so five design decisions are
-currently sitting on their documented fallbacks rather than on evidence. A 13-item manual checklist
-has never been executed. `README.md`'s "What's missing" list opens with exactly this.
+currently sitting on their documented fallbacks rather than on evidence. A 15-item manual checklist
+(the spec said 13; items 14-15, sleep/lock and uninstall, were missed) has never been executed. `README.md`'s "What's missing" list opens with exactly this.
 
 Two things change now that were not true when those decisions were made:
 
@@ -199,7 +199,7 @@ Run from a build of the current `main`, installed from `Spit-Setup.exe` as a use
 
 Each spike writes to `docs/SPIKES.md` as it completes (rule 1), not in a batch at the end.
 
-### 3.2 Session 2 — the 13-item checklist
+### 3.2 Session 2 — the 15-item checklist
 
 `tasks/prd-spit-mac-windows.md` §5 "Windows manual checklist", run against an installer downloaded
 through Edge, with screenshots (rule 21). Run only after §3.1 is complete and any rule-2 fallback is
@@ -252,7 +252,7 @@ All five have a section in `docs/SPIKES.md` containing raw evidence, not a verdi
 
 ### 5.2 The checklist — done when
 
-All 13 items pass, or a failing item has been triaged into one of §3.2's three buckets **and written
+All 15 items pass, or a failing item has been triaged into one of §3.2's three buckets **and written
 down**. An item silently skipped is a failed checklist.
 
 ### 5.3 The model decision — done when
@@ -312,7 +312,7 @@ the Mac's directly — `dictations.asr_model` already namespaces the Windows cli
    The honest alternative is to make the *recommendation* conditional on a detected Vulkan device at
    first run — more code, and unbuildable until S1 says whether it would ever fire.
    **Decided by: Miguel, once S1 has a number.**
-3. **How many of the 13 checklist items can fail before the answer is "not ready" rather than "fix
+3. **How many of the 15 checklist items can fail before the answer is "not ready" rather than "fix
    these three"?** Not specified, deliberately — it depends which ones. Items 3 and 4 (clipboard
    restore, Win+V) are rules 9–10 and are unconditional; the rest are judgement.
    **Decided by: Miguel, during §3.2.**

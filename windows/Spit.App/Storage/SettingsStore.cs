@@ -19,6 +19,11 @@ public sealed class SettingsStore
         ArgumentNullException.ThrowIfNull(paths);
         path = paths.SettingsFile;
         current = Load(path);
+        // A first launch writes its defaults at once, so the model it starts with is pinned in the file. Without this
+        // an install that never changed a setting keeps no `modelFile`, and a later build with a different
+        // `ModelCatalog.DefaultFile` would switch it silently and download the new model (prd-windows-parity.md
+        // rule 7: the default is for new installs only).
+        if (!File.Exists(path)) Save(path, current);
     }
 
     /// Raised after a change, with the new settings, on the thread that made it.

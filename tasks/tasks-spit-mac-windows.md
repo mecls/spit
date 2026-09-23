@@ -260,7 +260,10 @@ only trust the boxes if they were ticked as the work happened.
   - [ ] 9.1 Live transcription on Windows fell back to a whole-recording pass on the CI clip (correct text, 37 s
         instead of 12.9 s). Log the streamed and tail texts from real dictations, then tune
         `Stitch.TryJoinAllowingTailSkip` / `StreamTail.OverlapMs`. Live transcription is off by default
-  - [ ] 9.2 Decide whether to port three Windows fixes to the Mac, which has the same patterns: appending a tail
+        — Moved to `tasks/tasks-windows-parity.md` 5.0; the recorder and replay it needs are 1.11
+  - [x] 9.2 Decide whether to port three Windows fixes to the Mac, which has the same patterns: appending a tail
         when no seam is found (duplicated words), a live stream left running after a rejected dictation, and a
         double-tap latching while the model loads (build spec §16)
+        — Ported, all three: `tasks/tasks-windows-parity.md` 6.0 (commit 7db01d6), with 6.9 bringing the new
+        Mac tests back to Windows by name
   - [ ] 9.3 Open question 6: a spending ceiling for friends' cleanup on the Ollama key

@@ -6,3 +6,6 @@ publish/
 TestResults/
 *.user
 .vs/
+# Spike reports (windows/scripts/spike-*.ps1): evidence goes into docs/SPIKES.md, not the tree.
+spike-s1/
+spike-s5/

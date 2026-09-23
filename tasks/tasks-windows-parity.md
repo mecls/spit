@@ -35,7 +35,7 @@ Source spec: `tasks/prd-windows-parity.md`. Rule numbers below refer to its §2,
 ### Docs and evidence
 
 - `docs/SPIKES.md` - every spike's raw evidence (rule 1); the existing format to follow
-- `tasks/prd-spit-mac-windows.md` - §5 holds the 13-item Windows checklist and the latency SQL
+- `tasks/prd-spit-mac-windows.md` - §5 holds the 15-item Windows checklist and the latency SQL
 - `README.md` - the "What's missing" list this work closes out
 - `SintraLabs/site/spit/index.html` - **outside this repo**; the marked placeholder for rule 21's screenshots
 
@@ -109,6 +109,8 @@ only trust the boxes if they were ticked as the work happened.
   - [x] 1.12 Make S5 a before/after script, so the PC session records evidence rather than eyeballing Installed Apps
     - `windows/scripts/spike-s5.ps1 -Snapshot before|after`: Installed Apps entries (HKCU and HKLM uninstall keys), the app's version, the data folder's files, Credential Manager targets under `co.miraside.voice` (the target only — the token is never read), the Run value and whether it still points at a file. `before` warns when there is no token, no Run entry or no data, since surviving the upgrade proves nothing about something that was never there; `after` prints S5's table and verdict.
     - All four `.ps1` files parse under PowerShell 7.6 on the Mac; `spike-s5.ps1` touches the registry and `cmdkey`, so only its parse is checked here.
+    - `.github/workflows/spike-s5.yml` runs it on a GitHub Windows runner: packs both builds, installs 0.2.0-test, seeds the token and Run value in the app's own formats, leaves Spit running, installs 0.2.1-test over it and fails on any check. Not a substitute for 2.14 — a runner is Windows Server, elevated, with no Edge download — but it runs the script on real Windows before the PC depends on it, and re-runs whenever packing or storage changes.
+    - `windows/.gitignore` now ignores `spike-s1/` and `spike-s5/`: S1's 36 reports would otherwise have landed as untracked files on the PC.
 
 - [ ] 2.0 **(PC)** Session 1 — run the five spikes in rule 3's order (S4 → S3 → S2 → S1 → S5) and commit the evidence
   - [ ] 2.0a Build the two S5 installers first, since 1.7 could not (`pack.ps1 -PackVersion 0.2.0-test -OutputDir windows/Releases/s5-0.2.0`, then the same for `0.2.1-test`). Doing it now means S5 at the end of the session is an install, not a build
@@ -135,11 +137,13 @@ only trust the boxes if they were ticked as the work happened.
   - [ ] 3.4 Compare S1's median Vulkan one-pass time for `ggml-large-v3-turbo-q5_0.bin` on `en.wav` against rule 6's **≤ 3.15 s**, and write the comparison down as a sentence with both numbers in it
   - [ ] 3.5 If it clears: change `ModelCatalog.DefaultFile` to `TurboCompressedFile` in `windows/Spit.Core/Asr/ModelCatalog.cs:19`
   - [ ] 3.6 Rewrite `ModelCatalog.cs:7-10`'s header comment either way, citing the measured GPU number instead of the current "friends' PCs mostly have no GPU Vulkan can use" assumption (rule 6)
-  - [ ] 3.7 Verify rule 7 holds in code: an existing install keeps the model it already downloaded and does not re-fetch 574 MB. Check `SettingsStore`'s `ModelFile` read path — `DefaultFile` must only apply when no setting exists
+  - [x] 3.7 Verify rule 7 holds in code: an existing install keeps the model it already downloaded and does not re-fetch 574 MB. Check `SettingsStore`'s `ModelFile` read path — `DefaultFile` must only apply when no setting exists
+    - **It held for most installs and not all.** `SettingsStore.Update` rewrites the whole record, `modelFile` included, on any change — onboarding, a synced mode or language — so those installs have their model pinned. But an install that never wrote `settings.json` (onboarding never finished, nothing changed) loaded `Settings.Defaults`, and a changed `DefaultFile` would have switched it silently and started the download rule 7 forbids.
+    - Fixed before anyone has installed it: `SettingsStore` writes its defaults on a first launch, so the model a build starts with is always in the file. Test: `SettingsStoreTests.AFirstLaunch_PinsTheModelItStartsWith`. Done ahead of 3.5 on purpose — the pin must ship in the build *before* any default change, or it pins the new default.
   - [ ] 3.8 If the default changed: update `Strings.ModelLabelSmall` / `ModelLabelTurbo` so the labels no longer imply small is the fast choice
   - [ ] 3.9 Run `dotnet test windows/Spit.sln` and confirm the baseline from 1.8 (215 since 6.9) still passes, minus any `rightAlt` cases deliberately removed in 3.1
 
-- [ ] 4.0 **(PC)** Session 2 — the 13-item manual checklist, with screenshots and triage
+- [ ] 4.0 **(PC)** Session 2 — the 15-item manual checklist, with screenshots and triage
   - [ ] 4.1 Item 1 + rule 21: download through Edge and capture screenshots of the Edge warning, SmartScreen, and Smart App Control if it fires. Confirm the install needs no admin prompt
   - [ ] 4.2 Item 2: hold the hotkey and dictate into Notepad, Chrome and an Office app
   - [ ] 4.3 Item 3: copy an image, dictate, press Ctrl+V — the image pastes (rule 10)
@@ -153,6 +157,9 @@ only trust the boxes if they were ticked as the work happened.
   - [ ] 4.11 Item 11: close the window and confirm the hotkey still works; reboot and confirm launch-at-login survived
   - [ ] 4.12 Item 12: change Mode on the PC, then confirm `GET /v1/settings` still shows the Mac's hotkey (rule 46 — Windows never writes the hotkey)
   - [ ] 4.13 Item 13: Insights shows the same totals as the Mac for the same user, and "Google Chrome" is a single bar
+  - [ ] 4.13a Item 14: sleep and wake the PC, then lock and unlock — the hotkey still works (rule 29, `HookWatchdog`)
+  - [ ] 4.13b Item 15: uninstall from Settings › Apps removes the program and leaves `%LOCALAPPDATA%\Miraside\Spit\`
+    - Added 2026-09-23: `prd-spit-mac-windows.md` §5's checklist has **15** items, not 13 — items 14 and 15 were in the checklist and in no task, so session 2 would have skipped them without anyone deciding to. Lettered rather than renumbered so 4.14's triage keeps its number (7.7 and the spec refer to it)
   - [ ] 4.14 Triage every failure into one of spec §3.2's three buckets — blocks-release, documented-limitation, or follow-up — and write the bucket down against the item. An item silently skipped is a failed checklist (§5.2)
 
 - [ ] 5.0 **(PC)** Session 3 — measure, then fix, live transcription
@@ -195,4 +202,5 @@ only trust the boxes if they were ticked as the work happened.
   - [ ] 7.4 Update `README.md`: the Windows row no longer says "Never run on a physical PC", and the "What's missing" list loses items 1, 2 and 5
   - [ ] 7.5 Fill the marked placeholder in `SintraLabs/site/spit/index.html` (**outside this repo**) with 4.1's screenshots, and remove the copy describing Windows as the slower platform if rule 8 fired
   - [ ] 7.6 Tick off `tasks/tasks-spit-mac-windows.md` items 1.3–1.7 (the five spikes) and 9.1–9.2, pointing each at the `docs/SPIKES.md` section that settles it
+    - 9.2 ticked 2026-09-23 (the back-port is 6.0); 9.1 points at 5.0. The five spikes and 9.1 wait for the PC.
   - [ ] 7.7 Record what is still open: item 9.3 (a spending ceiling for friends' cleanup on the Ollama key) and any 4.14 follow-ups, so closing this list does not quietly drop them
